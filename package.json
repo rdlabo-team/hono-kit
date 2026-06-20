@@ -1,7 +1,7 @@
 {
   "name": "@rdlabo/hono-kit",
   "version": "0.0.0",
-  "private": true,
+  "private": false,
   "type": "module",
   "description": "Infrastructure toolkit for building APIs on Hono + Cloudflare Workers: Firebase ID-token verification (jose), AWS Secrets Manager (aws4fetch), ETag/validation/zod-coerce middleware, deadlock retry, and shared HTTP helpers.",
   "author": "Masahiko Sakakibara<sakakibara@rdlabo.jp>",
@@ -30,6 +30,10 @@
   "engines": {
     "node": ">=20.0.0"
   },
+  "files": [
+    "src",
+    "!src/**/*.spec.ts"
+  ],
   "exports": {
     ".": {
       "types": "./src/index.ts",
