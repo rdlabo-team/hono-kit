@@ -1,4 +1,6 @@
 import { createRemoteJWKSet } from 'jose';
+import { IdentityToolkit } from './identity-toolkit';
+import type { ServiceAccount } from './identity-toolkit';
 import { JoseFirebaseVerifier, SECURETOKEN_JWK_URL } from './jose-firebase-verifier';
 
 /**
@@ -20,4 +22,28 @@ export function createRemoteFirebaseVerifier(projectId: string): JoseFirebaseVer
     verifiers.set(projectId, verifier);
   }
   return verifier;
+}
+
+let saVerifierCache: { key: string; verifier: JoseFirebaseVerifier } | null = null;
+
+/**
+ * サービスアカウント JSON から検証器を作る便宜ファクトリ（receptray/tipsys hono の `firebaseFor` 相当）。
+ * `getUser`/`deleteUser` のため `IdentityToolkit` を内包する点が `createRemoteFirebaseVerifier` との違い。
+ * SA JSON 文字列をキーに isolate 内で 1 つだけキャッシュ（秘密が変わったときだけ再生成）し、
+ * JWKS は `createRemoteFirebaseVerifier` と共有する。
+ */
+export function createServiceAccountVerifier(serviceAccountJson: string): JoseFirebaseVerifier {
+  if (saVerifierCache?.key !== serviceAccountJson) {
+    jwks ??= createRemoteJWKSet(new URL(SECURETOKEN_JWK_URL));
+    const sa = JSON.parse(serviceAccountJson) as ServiceAccount;
+    saVerifierCache = {
+      key: serviceAccountJson,
+      verifier: new JoseFirebaseVerifier({
+        projectId: sa.project_id,
+        keyResolver: jwks,
+        identity: new IdentityToolkit(sa),
+      }),
+    };
+  }
+  return saVerifierCache.verifier;
 }
