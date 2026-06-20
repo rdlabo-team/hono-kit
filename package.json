@@ -1,0 +1,69 @@
+{
+  "name": "@rdlabo/hono-kit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Infrastructure toolkit for building APIs on Hono + Cloudflare Workers: Firebase ID-token verification (jose), AWS Secrets Manager (aws4fetch), ETag/validation/zod-coerce middleware, deadlock retry, and shared HTTP helpers.",
+  "author": "Masahiko Sakakibara<sakakibara@rdlabo.jp>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rdlabo-team/hono-kit.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rdlabo-team/hono-kit/issues"
+  },
+  "homepage": "https://github.com/rdlabo-team/hono-kit#readme",
+  "keywords": [
+    "hono",
+    "cloudflare-workers",
+    "workers",
+    "edge",
+    "firebase",
+    "jose",
+    "aws-secrets-manager",
+    "middleware",
+    "etag",
+    "zod",
+    "nestjs"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint \"src/**/*.ts\"",
+    "lint:fix": "eslint \"src/**/*.ts\" --fix",
+    "format": "prettier --write \"src/**/*.ts\"",
+    "format:check": "prettier --check \"src/**/*.ts\""
+  },
+  "peerDependencies": {
+    "@hono/zod-validator": "^0.8.0",
+    "aws4fetch": "^1.0.20",
+    "hono": "^4.6.0",
+    "jose": "^6.2.0",
+    "zod": "^4.4.0"
+  },
+  "devDependencies": {
+    "@hono/eslint-config": "^2.1.0",
+    "@hono/zod-validator": "^0.8.0",
+    "@types/node": "^22.19.21",
+    "aws4fetch": "^1.0.20",
+    "eslint": "^9.39.4",
+    "hono": "^4.6.0",
+    "jose": "^6.2.3",
+    "prettier": "^3.8.4",
+    "typescript": "~5.6.2",
+    "typescript-eslint": "^8.61.1",
+    "vitest": "^2.1.0",
+    "zod": "^4.4.3"
+  }
+}
