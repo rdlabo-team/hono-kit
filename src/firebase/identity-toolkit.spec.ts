@@ -30,7 +30,9 @@ describe('IdentityToolkit', () => {
 
   it('lookup はアクセストークンを取得してユーザーを返す', async () => {
     const fetchMock = stubFetch((url) => {
-      if (url === TOKEN_URL) {return tokenResponse();}
+      if (url === TOKEN_URL) {
+        return tokenResponse();
+      }
       if (url.endsWith('accounts:lookup')) {
         return new Response(JSON.stringify({ users: [{ localId: 'uid1', email: 'a@b.c' }] }), { status: 200 });
       }

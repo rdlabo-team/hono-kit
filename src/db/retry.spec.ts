@@ -17,7 +17,7 @@ describe('retryWhenDeadlock', () => {
       if (calls < 3) {
         throw deadlock();
       }
-      return'recovered';
+      return 'recovered';
     });
     await expect(retryWhenDeadlock(fn, 3, 1)).resolves.toBe('recovered');
     expect(fn).toHaveBeenCalledTimes(3);
@@ -41,7 +41,10 @@ describe('retryWhenDeadlock', () => {
 
   it('指数バックオフで待つ（delay * (attempt+1)）', async () => {
     const delays: number[] = [];
-    const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((handler: (...args: unknown[]) => void, timeout?: number) => {
+    const spy = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
+      handler: (...args: unknown[]) => void,
+      timeout?: number,
+    ) => {
       delays.push(timeout ?? 0);
       handler(); // 同期実行してテストを高速化
       return 0 as unknown as ReturnType<typeof globalThis.setTimeout>;
@@ -50,7 +53,9 @@ describe('retryWhenDeadlock', () => {
       let calls = 0;
       const fn = async () => {
         calls += 1;
-        if (calls < 3) {throw deadlock();}
+        if (calls < 3) {
+          throw deadlock();
+        }
         return 'ok';
       };
       await expect(retryWhenDeadlock(fn, 3, 100)).resolves.toBe('ok');

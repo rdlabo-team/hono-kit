@@ -4,8 +4,14 @@
 
 // middleware
 export { finalizeResponse } from './middleware/finalize-response';
-export { validate } from './middleware/validation';
-export type { ValidateOptions, ValidationTarget, ZodErrorLike } from './middleware/validation';
+export { validate, createSentryValidate } from './middleware/validation';
+export type {
+  ValidateOptions,
+  ValidationTarget,
+  ZodErrorLike,
+  SentryLike,
+  SentryScopeLike,
+} from './middleware/validation';
 export { zNum, zNumNullable, zNumOptional, zNumWithDefault } from './middleware/zod-coerce';
 export { createAuthMiddleware } from './middleware/auth';
 export type { AuthMiddlewareOptions } from './middleware/auth';

@@ -55,3 +55,31 @@ export function validate<T>(target: ValidationTarget, schema: ZodType<T>, option
     return undefined;
   });
 }
+
+/** Sentry の最小形（`@sentry/cloudflare` 等への直接依存を避けるための構造型）。 */
+export interface SentryScopeLike {
+  setTag(key: string, value: string): void;
+  setContext(key: string, context: Record<string, unknown> | null): void;
+}
+export interface SentryLike {
+  withScope(callback: (scope: SentryScopeLike) => void): void;
+  captureException(error: unknown): void;
+}
+
+/**
+ * DTO 検証 400 を Sentry に通報する `validate` を返すファクトリ（foodlabel/tipsys/winecode で重複していた
+ * reportValidationToSentry を集約）。kit は `@sentry/cloudflare` に依存せず、Sentry モジュールを注入する。
+ * 通報は `tag error.type=dto_validation` ＋ `context validation={errorCount, errors}`（各 /api の
+ * sentry-validation.pipe.ts 準拠）。検証の挙動・レスポンスは `validate` と同一（通報は副作用のみ）。
+ */
+export function createSentryValidate(sentry: SentryLike) {
+  const onValidationError = (error: ZodErrorLike): void => {
+    const messages = zodToMessages(error);
+    sentry.withScope((scope) => {
+      scope.setTag('error.type', 'dto_validation');
+      scope.setContext('validation', { errorCount: messages.length, errors: messages });
+      sentry.captureException(error);
+    });
+  };
+  return <T>(target: ValidationTarget, schema: ZodType<T>) => validate(target, schema, { onValidationError });
+}

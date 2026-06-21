@@ -82,7 +82,9 @@ describe('secrets-manager (aws4fetch GetSecretValue)', () => {
       call += 1;
       return call === 1
         ? Promise.reject(new Error('network down'))
-        : Promise.resolve(new Response(JSON.stringify({ SecretString: JSON.stringify({ ok: true }) }), { status: 200 }));
+        : Promise.resolve(
+            new Response(JSON.stringify({ SecretString: JSON.stringify({ ok: true }) }), { status: 200 }),
+          );
     });
     vi.stubGlobal('fetch', fetchMock);
 
