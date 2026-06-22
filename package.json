@@ -31,6 +31,7 @@
     "node": ">=20.0.0"
   },
   "files": [
+    "dist",
     "src",
     "scripts",
     "!src/**/*.spec.ts"
@@ -40,19 +41,21 @@
   },
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
     },
     "./db": {
-      "types": "./src/db/index.ts",
-      "import": "./src/db/index.ts"
+      "types": "./dist/db/index.d.ts",
+      "import": "./dist/db/index.js"
     },
     "./testing": {
-      "types": "./src/testing/index.ts",
-      "import": "./src/testing/index.ts"
+      "types": "./dist/testing/index.d.ts",
+      "import": "./dist/testing/index.js"
     }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "prepare": "npm run build",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
