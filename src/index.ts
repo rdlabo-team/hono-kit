@@ -21,6 +21,8 @@ export { getUserProtocol } from './http/user-protocol';
 export type { IUserProtocol } from './http/user-protocol';
 export { getAppInfo } from './http/app-info';
 export type { AppInfo } from './http/app-info';
+export { resolveAppEnv, isProductionEnv } from './http/app-env';
+export type { AppEnv } from './http/app-env';
 export { HttpStatus } from './http/http-status';
 export { createNestErrorHandler, nestNotFoundHandler, NEST_REASON_PHRASES } from './http/nest-error';
 export type { NestErrorHandlerOptions, ErrorReportContext, ErrorReporter } from './http/nest-error';
