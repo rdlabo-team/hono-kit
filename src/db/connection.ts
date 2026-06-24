@@ -15,6 +15,11 @@ export interface HyperdriveLike {
 /**
  * Hyperdrive バインディングから mysql2 の createConnection 用オプションを作る。
  * `disableEval: true`（Workers で eval 不可）は既定で付与。`extra` で timezone 等を上書き/追加。
+ *
+ * `decimalNumbers: true`: DECIMAL/NEWDECIMAL を文字列でなく JS number で返す。Drizzle の
+ * `$inferSelect`（decimal→string）と生 SQL reads の戻り値を、各 repo の数値ドメイン型
+ * （nutrition の number 等）に揃えるため既定で有効化。precision/scale が JS の安全整数域
+ * （decimal(15,2) 程度まで）を超える列が無いことが前提。
  */
 export function hyperdriveConnectionOptions(
   hyperdrive: HyperdriveLike,
@@ -27,6 +32,7 @@ export function hyperdriveConnectionOptions(
     database: hyperdrive.database,
     port: hyperdrive.port,
     disableEval: true,
+    decimalNumbers: true,
     ...extra,
   };
 }

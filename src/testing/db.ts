@@ -70,7 +70,9 @@ export function createTestDb(options: CreateTestDbOptions): TestDb {
     },
 
     createTestPool(): Pool {
-      return createPool({ ...connection, database: dbName, connectionLimit: 5 });
+      // decimalNumbers: true mirrors the runtime hyperdriveConnectionOptions so
+      // specs read DECIMAL columns as numbers (not strings), matching production.
+      return createPool({ ...connection, database: dbName, connectionLimit: 5, decimalNumbers: true });
     },
 
     async truncateAll(pool: Pool): Promise<void> {

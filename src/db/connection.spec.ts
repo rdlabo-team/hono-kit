@@ -16,7 +16,7 @@ vi.mock('mysql2/promise', () => ({
 const hd: HyperdriveLike = { host: 'db.example', user: 'u', password: 'p', database: 'app', port: 3306 };
 
 describe('hyperdriveConnectionOptions', () => {
-  it('Hyperdrive から mysql2 オプションを作り disableEval を付与する', () => {
+  it('Hyperdrive から mysql2 オプションを作り disableEval/decimalNumbers を付与する', () => {
     expect(hyperdriveConnectionOptions(hd)).toEqual({
       host: 'db.example',
       user: 'u',
@@ -24,6 +24,7 @@ describe('hyperdriveConnectionOptions', () => {
       database: 'app',
       port: 3306,
       disableEval: true,
+      decimalNumbers: true,
     });
   });
 
