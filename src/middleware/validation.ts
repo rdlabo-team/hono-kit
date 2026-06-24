@@ -34,23 +34,22 @@ function zodToMessages(error: ZodErrorLike): string[] {
   });
 }
 
-function nestValidationBody(error: ZodErrorLike) {
-  return {
-    statusCode: 400,
-    message: zodToMessages(error),
-    error: 'Bad Request',
-  };
-}
-
 export function validate<T>(target: ValidationTarget, schema: ZodType<T>, options?: ValidateOptions) {
   return zValidator(target, schema, (result, c) => {
     if (!result.success) {
+      const messages = zodToMessages(result.error);
+      // Surface the failing fields in the runtime log. Without this the 400 is
+      // invisible in `wrangler dev`/Workers logs (Sentry is the only sink, and
+      // it is not visible locally), so a field-level type mismatch — e.g. a
+      // string sent to `z.number()` — dies silently and is painful to diagnose.
+      // Paths + zod messages only; no request values are logged.
+      console.warn(`[validation] ${c.req.method} ${c.req.path} (${target}) → 400: ${messages.join('; ')}`);
       try {
         options?.onValidationError?.(result.error, c);
       } catch {
         // Reporting must never change validation error behavior.
       }
-      return c.json(nestValidationBody(result.error), 400);
+      return c.json({ statusCode: 400, message: messages, error: 'Bad Request' }, 400);
     }
     return undefined;
   });

@@ -40,6 +40,40 @@ describe('validate', () => {
     expect(body.message.some((m) => m.startsWith('age:'))).toBe(true);
   });
 
+  it('検証失敗を console.warn でログに出す（method/path/target と失敗フィールド）', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const res = await buildApp().request('/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 123 }),
+      });
+      expect(res.status).toBe(400);
+      expect(warn).toHaveBeenCalledTimes(1);
+      const line = warn.mock.calls[0][0] as string;
+      expect(line).toContain('[validation]');
+      expect(line).toContain('POST');
+      expect(line).toContain('(json)');
+      expect(line).toContain('age:');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('検証成功時は console.warn を呼ばない', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      await buildApp().request('/', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ name: 'a', age: 20 }),
+      });
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('query ターゲットでも検証できる', async () => {
     const ok = await buildApp().request('/search?q=wine');
     expect(ok.status).toBe(200);
