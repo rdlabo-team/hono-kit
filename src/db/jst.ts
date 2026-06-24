@@ -1,6 +1,8 @@
 // JST 日時の整形を「DB 書き込みの副作用」として列の境界に寄せるための共有部品。
-// drizzle-orm の値・型は import しない（kit の脱・型同一性方針）。各 repo が自分の
-// `customType` にこれら params を渡して列を作る（ブランドは repo 側の drizzle で確定）:
+// drizzle-orm の値・型は import しない（kit の脱・型同一性方針）。kit で完成した customType 列を
+// export すると、消費側と drizzle-orm のコピーが分かれた場合に `.default(sql\`…\`)` 等で `SQL` の
+// private プロパティ（shouldInlineParams）が nominal 不一致になり型衝突する（実測で確認）。そのため
+// 列生成は消費側の `customType` に委ね、kit は params とヘルパだけ供給する:
 //
 //   import { customType } from 'drizzle-orm/mysql-core';
 //   import { jstTimestampParams, jstDateParams } from '@rdlabo/hono-kit/db';
