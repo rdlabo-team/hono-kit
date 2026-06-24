@@ -72,13 +72,21 @@ export function createTestDb(options: CreateTestDbOptions): TestDb {
     createTestPool(): Pool {
       // decimalNumbers / timezone mirror the runtime hyperdriveConnectionOptions so specs read
       // DECIMAL columns as numbers and handle datetime in +09:00 (JST), matching production.
-      return createPool({
+      const pool = createPool({
         ...connection,
         database: dbName,
         connectionLimit: 5,
         decimalNumbers: true,
         timezone: '+09:00',
       });
+      // Pin ONLY_FULL_GROUP_BY on every pooled connection so GROUP BY violations surface in specs
+      // regardless of the server's my.cnf (fleet policy centralized here, not per-repo). CONCAT keeps
+      // the server's other sql_mode flags and is harmless if ONLY_FULL_GROUP_BY is already present.
+      // mysql2 queues this SET ahead of the consumer's first query on each new physical connection.
+      pool.on('connection', (conn) => {
+        void conn.query("SET SESSION sql_mode = CONCAT(@@SESSION.sql_mode, ',ONLY_FULL_GROUP_BY')");
+      });
+      return pool;
     },
 
     async truncateAll(pool: Pool): Promise<void> {
