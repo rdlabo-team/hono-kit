@@ -1,6 +1,6 @@
 import type { Pool } from 'mysql2/promise';
-import type { DecodedIdToken } from '../firebase/firebase-verifier';
-import type { FakeFirebaseVerifier } from './fakes';
+import type { DecodedIdToken } from '../firebase/firebase-verifier.js';
+import type { FakeFirebaseVerifier } from './fakes.js';
 
 /**
  * app interceptor 互換の認証ヘッダ（`x-amz-security-token` + `x-amz-meta-*`）を組む。

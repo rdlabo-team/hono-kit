@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { validate } from './validation';
-import type { ValidateOptions } from './validation';
+import { validate } from './validation.js';
+import type { ValidateOptions } from './validation.js';
 
 function buildApp(options?: ValidateOptions) {
   const app = new Hono();

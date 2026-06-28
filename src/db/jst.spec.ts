@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toJstDate } from './jst';
+import { toJstDate } from './jst.js';
 
 describe('toJstDate', () => {
   it('returns null for nullish/blank input', () => {

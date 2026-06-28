@@ -1,8 +1,8 @@
 import type { Context, Env, MiddlewareHandler } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
-import { getAppInfo } from '../http/app-info';
-import type { AppInfo } from '../http/app-info';
+import { getAppInfo } from '../http/app-info.js';
+import type { AppInfo } from '../http/app-info.js';
 
 export interface AuthMiddlewareOptions<E extends Env, Verified, Id = unknown> {
   /** ID トークンを載せるヘッダ。既定 `'x-amz-security-token'`（フリート共通）。 */

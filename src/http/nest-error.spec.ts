@@ -2,8 +2,8 @@ import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { describe, expect, it, vi } from 'vitest';
-import { createNestErrorHandler, nestNotFoundHandler, NEST_REASON_PHRASES } from './nest-error';
-import type { NestErrorHandlerOptions } from './nest-error';
+import { createNestErrorHandler, nestNotFoundHandler, NEST_REASON_PHRASES } from './nest-error.js';
+import type { NestErrorHandlerOptions } from './nest-error.js';
 
 function buildApp(options?: NestErrorHandlerOptions) {
   const app = new Hono();

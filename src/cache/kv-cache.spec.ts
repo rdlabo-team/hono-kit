@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { KVCache } from './kv-cache';
-import type { KVNamespace } from './kv-cache';
+import { KVCache } from './kv-cache.js';
+import type { KVNamespace } from './kv-cache.js';
 
 class FakeKV implements KVNamespace {
   store = new Map<string, string>();

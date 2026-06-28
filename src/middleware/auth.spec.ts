@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
-import { createNestErrorHandler } from '../http/nest-error';
-import { createAuthMiddleware } from './auth';
-import type { AuthMiddlewareOptions } from './auth';
+import { createNestErrorHandler } from '../http/nest-error.js';
+import { createAuthMiddleware } from './auth.js';
+import type { AuthMiddlewareOptions } from './auth.js';
 
 interface Decoded {
   uid: string;

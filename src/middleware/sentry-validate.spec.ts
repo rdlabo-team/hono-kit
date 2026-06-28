@@ -1,8 +1,8 @@
 import { Hono } from 'hono';
 import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { createSentryValidate } from './validation';
-import type { SentryLike } from './validation';
+import { createSentryValidate } from './validation.js';
+import type { SentryLike } from './validation.js';
 
 function fakeSentry() {
   const tags: Record<string, string> = {};

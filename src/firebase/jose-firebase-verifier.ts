@@ -1,7 +1,7 @@
 import { jwtVerify } from 'jose';
 import type { CryptoKey, JWK, JWTVerifyGetKey, KeyObject } from 'jose';
-import type { DecodedIdToken, FirebaseVerifier } from './firebase-verifier';
-import type { IdentityToolkit } from './identity-toolkit';
+import type { DecodedIdToken, FirebaseVerifier } from './firebase-verifier.js';
+import type { IdentityToolkit } from './identity-toolkit.js';
 
 // jose v6 removed `KeyLike`; the verification key is a static key (prod: createRemoteJWKSet,
 // test: a CryptoKey) or a dynamic getKey function. Union both overloads' key params.

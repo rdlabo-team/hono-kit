@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { getAuthenticationSecret } from './secrets-manager';
+import { getAuthenticationSecret } from './secrets-manager.js';
 
 interface TestSecret {
   firebaseDevelopment: string;

@@ -1,6 +1,6 @@
 import type { Context } from 'hono';
 import { describe, expect, it } from 'vitest';
-import { getAppInfo } from './app-info';
+import { getAppInfo } from './app-info.js';
 
 function fakeContext(headers: Record<string, string>): Context {
   return {

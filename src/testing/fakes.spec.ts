@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createNoopDatabase, FakeFirebaseVerifier } from './fakes';
+import { createNoopDatabase, FakeFirebaseVerifier } from './fakes.js';
 
 describe('FakeFirebaseVerifier', () => {
   it('register したトークンは verifyIdToken で復元できる', async () => {

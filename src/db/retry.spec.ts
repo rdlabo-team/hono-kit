@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { retryWhenDeadlock } from './retry';
+import { retryWhenDeadlock } from './retry.js';
 
 const deadlock = () => Object.assign(new Error('deadlock'), { code: 'ER_LOCK_DEADLOCK' });
 

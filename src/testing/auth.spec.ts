@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { authHeaders, registerFirebaseToken } from './auth';
-import { configurableFake } from './configurable-fake';
-import { FakeFirebaseVerifier } from './fakes';
-import { fakeApiList, fakePaymentIntent, fakeStripeEvent } from './stripe-fixtures';
+import { authHeaders, registerFirebaseToken } from './auth.js';
+import { configurableFake } from './configurable-fake.js';
+import { FakeFirebaseVerifier } from './fakes.js';
+import { fakeApiList, fakePaymentIntent, fakeStripeEvent } from './stripe-fixtures.js';
 
 describe('authHeaders', () => {
   it('既定で x-amz-security-token + meta + content-type を組む', () => {

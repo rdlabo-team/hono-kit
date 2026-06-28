@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { JoseFirebaseVerifier } from './jose-firebase-verifier';
-import { createRemoteFirebaseVerifier, createServiceAccountVerifier } from './remote-verifier';
+import { JoseFirebaseVerifier } from './jose-firebase-verifier.js';
+import { createRemoteFirebaseVerifier, createServiceAccountVerifier } from './remote-verifier.js';
 
 const saJson = (projectId: string) =>
   JSON.stringify({

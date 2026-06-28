@@ -1,7 +1,7 @@
 import type { Pool } from 'mysql2/promise';
-import { databaseFrom } from '../db/database';
-import type { DisposableDatabase } from '../db/database';
-import type { DecodedIdToken, FirebaseVerifier } from '../firebase/firebase-verifier';
+import { databaseFrom } from '../db/database.js';
+import type { DisposableDatabase } from '../db/database.js';
+import type { DecodedIdToken, FirebaseVerifier } from '../firebase/firebase-verifier.js';
 
 /**
  * オフライン route テスト用の in-memory FirebaseVerifier（4 repo 同一実装を集約）。

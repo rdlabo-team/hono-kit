@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { HttpStatus } from './http-status';
+import { HttpStatus } from './http-status.js';
 
 describe('HttpStatus', () => {
   it('NestJS と同じ代表的なコード値を持つ', () => {

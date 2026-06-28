@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createAiGatewayProvider } from './gateway';
+import { createAiGatewayProvider } from './gateway.js';
 
 describe('createAiGatewayProvider', () => {
   const valid = { accountId: 'acc', gateway: 'gw', token: 'tok' };

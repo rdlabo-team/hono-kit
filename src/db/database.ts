@@ -1,8 +1,8 @@
 import { createConnection } from 'mysql2/promise';
 import type { Connection, Pool } from 'mysql2/promise';
-import { hyperdriveConnectionOptions } from './connection';
-import type { HyperdriveLike } from './connection';
-import { retryWhenDeadlock } from './retry';
+import { hyperdriveConnectionOptions } from './connection.js';
+import type { HyperdriveLike } from './connection.js';
+import { retryWhenDeadlock } from './retry.js';
 
 /**
  * フリート共通のデータ層（NestJS/TypeORM の master/slave + retryWhenDeadlock 置換）。

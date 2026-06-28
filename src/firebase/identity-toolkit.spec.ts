@@ -1,7 +1,7 @@
 import { exportPKCS8, generateKeyPair } from 'jose';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { IdentityToolkit } from './identity-toolkit';
-import type { ServiceAccount } from './identity-toolkit';
+import { IdentityToolkit } from './identity-toolkit.js';
+import type { ServiceAccount } from './identity-toolkit.js';
 
 const NOW = 1_700_000_000;
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';

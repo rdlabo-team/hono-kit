@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { hyperdriveConnectionOptions, withMysqlConnections } from './connection';
-import type { HyperdriveLike } from './connection';
+import { hyperdriveConnectionOptions, withMysqlConnections } from './connection.js';
+import type { HyperdriveLike } from './connection.js';
 
 const ended: string[] = [];
 const opened: Record<string, unknown>[] = [];

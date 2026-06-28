@@ -1,8 +1,8 @@
 import mysql from 'mysql2/promise';
 import type { Pool } from 'mysql2/promise';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { provisionUser } from './auth';
-import { FakeFirebaseVerifier } from './fakes';
+import { provisionUser } from './auth.js';
+import { FakeFirebaseVerifier } from './fakes.js';
 
 // provisionUser は DB INSERT を伴う kit 機能なので、kit 側で（最小の users テーブルに対して）検証する。
 // ローカル MySQL(root/root@127.0.0.1:3306) が無い環境では skip（CI でDBが無くても落とさない）。

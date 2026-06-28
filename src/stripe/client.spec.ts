@@ -1,6 +1,6 @@
 import Stripe from 'stripe';
 import { describe, expect, it } from 'vitest';
-import { createStripeClient, verifyStripeWebhook } from './client';
+import { createStripeClient, verifyStripeWebhook } from './client.js';
 
 /** Stripe-Signature ヘッダを生成（scheme: `t=<ts>,v1=HMAC-SHA256(secret, "<ts>.<payload>")`）。 */
 async function stripeSignatureHeader(payload: string, secret: string, timestamp: number): Promise<string> {

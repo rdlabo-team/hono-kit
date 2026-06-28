@@ -1,7 +1,7 @@
 import { createRemoteJWKSet } from 'jose';
-import { IdentityToolkit } from './identity-toolkit';
-import type { ServiceAccount } from './identity-toolkit';
-import { JoseFirebaseVerifier, SECURETOKEN_JWK_URL } from './jose-firebase-verifier';
+import { IdentityToolkit } from './identity-toolkit.js';
+import type { ServiceAccount } from './identity-toolkit.js';
+import { JoseFirebaseVerifier, SECURETOKEN_JWK_URL } from './jose-firebase-verifier.js';
 
 /**
  * 本番用の便宜ファクトリ。`createRemoteJWKSet` で Google securetoken の公開鍵を取り、

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { getCloudFrontSignedUrl } from './cloudfront';
+import { getCloudFrontSignedUrl } from './cloudfront.js';
 
 function derToPem(der: ArrayBuffer): string {
   const bytes = new Uint8Array(der);

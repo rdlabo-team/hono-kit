@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
-import { zNum, zNumNullable, zNumOptional, zNumWithDefault } from './zod-coerce';
+import { zNum, zNumNullable, zNumOptional, zNumWithDefault } from './zod-coerce.js';
 
 describe('zNum', () => {
   it('数値文字列を number に強制する', () => {

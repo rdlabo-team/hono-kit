@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isProductionEnv, resolveAppEnv } from './app-env';
+import { isProductionEnv, resolveAppEnv } from './app-env.js';
 
 describe('resolveAppEnv', () => {
   it('APP_ENV=development の時だけ development', () => {

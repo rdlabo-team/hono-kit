@@ -1,7 +1,7 @@
 import { SignJWT, generateKeyPair } from 'jose';
 import { describe, it, expect, vi } from 'vitest';
-import type { IdentityToolkit } from './identity-toolkit';
-import { JoseFirebaseVerifier } from './jose-firebase-verifier';
+import type { IdentityToolkit } from './identity-toolkit.js';
+import { JoseFirebaseVerifier } from './jose-firebase-verifier.js';
 
 // jose v6: generateKeyPair yields CryptoKey; derive the type instead of the removed KeyLike.
 type SignKey = Awaited<ReturnType<typeof generateKeyPair>>['privateKey'];

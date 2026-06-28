@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { affectedRowsOf, insertIdOf, insertedIdsOf } from './write-result';
-import type { DzWriteResult } from './write-result';
+import { affectedRowsOf, insertIdOf, insertedIdsOf } from './write-result.js';
+import type { DzWriteResult } from './write-result.js';
 
 const result = (insertId: number, affectedRows: number): DzWriteResult =>
   [{ insertId, affectedRows }, []] as unknown as DzWriteResult;

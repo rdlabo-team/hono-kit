@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import { createHash } from 'node:crypto';
-import { finalizeResponse } from './finalize-response';
+import { finalizeResponse } from './finalize-response.js';
 
 // Express の `etag` パッケージと同じ算法を Node crypto で独立に再現（impl は Web Crypto + btoa）。
 // 両者が一致することで Express/Nest とのバイト一致を裏取りする。
