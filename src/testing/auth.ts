@@ -3,11 +3,27 @@ import type { DecodedIdToken } from '../firebase/firebase-verifier.js';
 import type { FakeFirebaseVerifier } from './fakes.js';
 
 /**
- * app interceptor 互換の認証ヘッダ（`x-amz-security-token` + `x-amz-meta-*`）を組む。
- * fleet 全 hono repo の route spec で同形に重複していたものを集約。
+ * Build authentication headers compatible with the client interceptor convention
+ * (`x-amz-security-token` + `x-amz-meta-*`).
  *
- * - `version` は `app_version`(varchar(10)) に入るため 10 文字以内。
- * - `contentType: null` を渡すと content-type を付けない（GET 等）。
+ * Consolidates the identically-shaped header boilerplate that route specs tend to duplicate.
+ *
+ * @remarks
+ * `version` is persisted into an `app_version` column (`varchar(10)`), so keep it to 10 characters
+ * or fewer. Passing `contentType: null` omits the `content-type` header entirely (e.g. for GET requests).
+ *
+ * @param token - Security token placed in the `x-amz-security-token` header.
+ * @param opts - Optional overrides.
+ * @param opts.version - App version for `x-amz-meta-version` (defaults to `'1.0.0'`).
+ * @param opts.uuid - Device/client UUID for `x-amz-meta-uuid` (defaults to `'test-uuid'`).
+ * @param opts.contentType - Content type; defaults to `'application/json'`. Pass `null` to omit the header.
+ * @returns A plain header record suitable for `fetch`/`app.request` calls.
+ * @example
+ * ```ts
+ * const res = await app.request('/me', { headers: authHeaders(token) });
+ * // GET without a content-type header:
+ * await app.request('/items', { headers: authHeaders(token, { contentType: null }) });
+ * ```
  */
 export function authHeaders(
   token: string,
@@ -25,8 +41,22 @@ export function authHeaders(
 }
 
 /**
- * fake firebase にトークンを登録するだけの薄いヘルパ（DB を触らない）。戻り値はトークン。
- * `users` テーブル形が repo 固有（例: airlec は email 主）で provisionUser が合わない場合に使う。
+ * Register a token on a fake Firebase verifier without touching the database.
+ *
+ * Use this when {@link provisionUser} does not fit because the project's `users` table has a
+ * non-conventional shape (for example, keyed by email rather than `firebase_uid`); pair it with a
+ * project-specific provisioning step.
+ *
+ * @param firebase - In-memory verifier to register the token on.
+ * @param uid - Firebase UID associated with the token.
+ * @param record - Additional decoded-token fields to merge in (e.g. `email`).
+ * @param token - Token string to register (defaults to `` `tok-${uid}` ``).
+ * @returns The registered token string.
+ * @example
+ * ```ts
+ * const token = registerFirebaseToken(firebase, 'uid-1', { email: 'a@example.com' });
+ * const res = await app.request('/me', { headers: authHeaders(token) });
+ * ```
  */
 export function registerFirebaseToken(
   firebase: FakeFirebaseVerifier,
@@ -39,10 +69,28 @@ export function registerFirebaseToken(
 }
 
 /**
- * fake firebase にトークンを登録し、`users(firebase_uid)` 行を用意して userId を返す。
- * `users(id, firebase_uid, agree)` の fleet 共通形を前提（foodlabel/receptray など）。同 uid の
- * 既存行があれば再利用する（冪等）。users テーブル形が異なる repo は registerFirebaseToken + 独自
- * provision を使う。
+ * Register a token on a fake Firebase verifier and ensure a matching `users` row exists, returning
+ * its id.
+ *
+ * @remarks
+ * Assumes a conventional `users(id, firebase_uid, agree)` table. The operation is idempotent: if a
+ * row with the same `firebase_uid` already exists it is reused rather than re-inserted. For projects
+ * whose `users` table has a different shape, use {@link registerFirebaseToken} plus project-specific
+ * provisioning instead.
+ *
+ * @param pool - mysql2 pool connected to the test database.
+ * @param firebase - In-memory verifier to register the token on.
+ * @param opts - Provisioning options.
+ * @param opts.uid - Firebase UID for the user.
+ * @param opts.token - Token string to register (defaults to `` `tok-${uid}` ``).
+ * @param opts.agree - Value for the `agree` column on insert (defaults to `1`).
+ * @param opts.email - Optional email merged into the decoded token record.
+ * @returns The resolved `userId`, along with the `uid` and registered `token`.
+ * @example
+ * ```ts
+ * const { userId, token } = await provisionUser(pool, firebase, { uid: 'uid-1' });
+ * const res = await app.request('/me', { headers: authHeaders(token) });
+ * ```
  */
 export async function provisionUser(
   pool: Pool,

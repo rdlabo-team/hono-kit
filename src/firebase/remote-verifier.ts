@@ -4,16 +4,43 @@ import type { ServiceAccount } from './identity-toolkit.js';
 import { JoseFirebaseVerifier, SECURETOKEN_JWK_URL } from './jose-firebase-verifier.js';
 
 /**
- * 本番用の便宜ファクトリ。`createRemoteJWKSet` で Google securetoken の公開鍵を取り、
- * `JoseFirebaseVerifier` を返す。トークン検証のみ用途（getUser/deleteUser は不要 = Identity Toolkit 無し）。
+ * Shared remote JWKS for Google's securetoken keys.
  *
- * JWKS は URL 固定なので isolate 内で 1 度だけ生成して共有し（jose が内部メモリにキャッシュ）、
- * verifier は projectId ごとにメモ化する。winecode の旧 `verifyFirebaseIdToken`（module-level JWKS）の
- * キャッシュ挙動を保つための置換。
+ * @remarks
+ * The JWKS URL is fixed, so the set is created once per isolate and shared across verifiers
+ * (`jose` caches the fetched keys internally). Lazily initialised on first use.
+ *
+ * @internal
  */
 let jwks: ReturnType<typeof createRemoteJWKSet> | undefined;
+/**
+ * Per-`projectId` cache of token-only verifiers, memoized for the lifetime of the isolate.
+ *
+ * @internal
+ */
 const verifiers = new Map<string, JoseFirebaseVerifier>();
 
+/**
+ * Create a token-verification-only Firebase verifier for the given project.
+ *
+ * Uses `createRemoteJWKSet` to fetch Google's securetoken public keys and returns a
+ * {@link JoseFirebaseVerifier}. This factory is for token verification only; it configures no
+ * Identity Toolkit client, so `getUser` / `deleteUser` are unavailable.
+ *
+ * @remarks
+ * The remote JWKS is created once per isolate and shared, and the returned verifier is
+ * memoized per `projectId`. This preserves the caching behaviour of a module-level JWKS so
+ * repeated calls do not re-fetch keys or allocate new verifiers.
+ *
+ * @param projectId - The Firebase project id whose tokens will be verified.
+ * @returns A verifier that validates ID tokens for `projectId`.
+ * @example
+ * ```ts
+ * const verifier = createRemoteFirebaseVerifier('my-firebase-project');
+ * const decoded = await verifier.verifyIdToken(idToken);
+ * console.log(decoded.uid);
+ * ```
+ */
 export function createRemoteFirebaseVerifier(projectId: string): JoseFirebaseVerifier {
   jwks ??= createRemoteJWKSet(new URL(SECURETOKEN_JWK_URL));
   let verifier = verifiers.get(projectId);
@@ -24,13 +51,35 @@ export function createRemoteFirebaseVerifier(projectId: string): JoseFirebaseVer
   return verifier;
 }
 
+/**
+ * Single-entry cache of the service-account verifier, keyed by the raw service-account JSON.
+ *
+ * @internal
+ */
 let saVerifierCache: { key: string; verifier: JoseFirebaseVerifier } | null = null;
 
 /**
- * サービスアカウント JSON から検証器を作る便宜ファクトリ（receptray/tipsys hono の `firebaseFor` 相当）。
- * `getUser`/`deleteUser` のため `IdentityToolkit` を内包する点が `createRemoteFirebaseVerifier` との違い。
- * SA JSON 文字列をキーに isolate 内で 1 つだけキャッシュ（秘密が変わったときだけ再生成）し、
- * JWKS は `createRemoteFirebaseVerifier` と共有する。
+ * Create a Firebase verifier from a service-account JSON string.
+ *
+ * Unlike {@link createRemoteFirebaseVerifier}, the returned {@link JoseFirebaseVerifier}
+ * embeds an {@link IdentityToolkit} client, enabling `getUser` and `deleteUser` in addition to
+ * token verification.
+ *
+ * @remarks
+ * The verifier is cached for the lifetime of the isolate, keyed by the service-account JSON
+ * string, and is only rebuilt when that secret changes. The remote JWKS is shared with
+ * {@link createRemoteFirebaseVerifier}.
+ *
+ * @param serviceAccountJson - The service-account key as a JSON string (parsed into {@link ServiceAccount}).
+ * @returns A verifier that validates ID tokens and can look up or delete users.
+ * @throws If `serviceAccountJson` is not valid JSON.
+ * @example
+ * ```ts
+ * const verifier = createServiceAccountVerifier(env.FIREBASE_SERVICE_ACCOUNT);
+ * const decoded = await verifier.verifyIdToken(idToken);
+ * const user = await verifier.getUser(decoded.uid);
+ * await verifier.deleteUser(decoded.uid);
+ * ```
  */
 export function createServiceAccountVerifier(serviceAccountJson: string): JoseFirebaseVerifier {
   if (saVerifierCache?.key !== serviceAccountJson) {

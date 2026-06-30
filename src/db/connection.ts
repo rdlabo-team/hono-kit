@@ -2,30 +2,45 @@ import { createConnection } from 'mysql2/promise';
 import type { Connection } from 'mysql2/promise';
 
 /**
- * Hyperdrive バインディングの最小形（@cloudflare/workers-types への依存を避けるための構造型）。
+ * Minimal structural shape of a Cloudflare Hyperdrive binding.
+ *
+ * @remarks
+ * Declared structurally to avoid a dependency on `@cloudflare/workers-types`; any object with these
+ * connection fields satisfies it.
  */
 export interface HyperdriveLike {
+  /** Database host to connect to. */
   host: string;
+  /** Database user. */
   user: string;
+  /** Database password. */
   password: string;
+  /** Database name. */
   database: string;
+  /** Database port. */
   port: number;
 }
 
 /**
- * Hyperdrive バインディングから mysql2 の createConnection 用オプションを作る。
- * `disableEval: true`（Workers で eval 不可）は既定で付与。`extra` で timezone 等を上書き/追加。
+ * Build mysql2 `createConnection` options from a Hyperdrive binding, applying the kit's defaults.
  *
- * `decimalNumbers: true`: DECIMAL/NEWDECIMAL を文字列でなく JS number で返す。Drizzle の
- * `$inferSelect`（decimal→string）と生 SQL reads の戻り値を、各 repo の数値ドメイン型
- * （nutrition の number 等）に揃えるため既定で有効化。precision/scale が JS の安全整数域
- * （decimal(15,2) 程度まで）を超える列が無いことが前提。
+ * @remarks
+ * Three defaults are applied and can each be overridden via `extra`:
  *
- * `timezone: '+09:00'`: フリートの接続先 RDB は session time_zone=Asia/Tokyo。mysql2 の driver
- * `timezone` 既定は `'local'`＝Workers では UTC で、揃わないと `datetime/timestamp` の生 Date 読みが
- * +9h・生 Date 書きが −9h ズレる（NestJS は JST 実行で一致＝移植で顕在化する潜在バグ）。driver を
- * 固定すれば round-trip の観測値は DB の session tz に非依存（内部格納 UTC 値だけ変わるが app 不可視）。
- * 非 JST repo は `extra: { timezone: '...' }` で上書き可。
+ * - `disableEval: true` — `eval` is unavailable in the Workers runtime, so the driver's eval-based
+ *   fast paths must be disabled.
+ * - `decimalNumbers: true` — return `DECIMAL`/`NEWDECIMAL` columns as JS `number` rather than
+ *   strings, so raw-SQL reads and Drizzle's inferred types align on a single numeric domain type.
+ *   This assumes no column's precision exceeds the JS safe-integer range.
+ * - `timezone: '+09:00'` — set the driver's session timezone to JST. mysql2 defaults to `'local'`,
+ *   which is UTC in the Workers runtime; pinning the driver timezone keeps `datetime`/`timestamp`
+ *   round-trips independent of the database's session timezone (only the internally stored UTC
+ *   value differs, which is invisible to the application). Non-JST deployments can override this
+ *   via `extra: { timezone: '...' }`.
+ *
+ * @param hyperdrive - the Hyperdrive binding to derive connection fields from.
+ * @param extra - additional mysql2 options merged last, overriding the defaults above.
+ * @returns a plain options object to pass to mysql2 `createConnection`.
  */
 export function hyperdriveConnectionOptions(
   hyperdrive: HyperdriveLike,
@@ -44,13 +59,40 @@ export function hyperdriveConnectionOptions(
   };
 }
 
+/**
+ * Minimal structural shape of a Workers `ExecutionContext`, limited to `waitUntil`.
+ *
+ * @remarks
+ * Declared structurally to avoid a dependency on `@cloudflare/workers-types`.
+ */
 export interface ExecutionContextLike {
+  /** Extend the request's lifetime until `promise` settles (used to close connections after the response). */
   waitUntil(promise: Promise<unknown>): void;
 }
 
 /**
- * primary/replica の接続を開いて `fn` を実行し、finally で `ctx.waitUntil` 越しに閉じる
- * （receptray/tipsys の worker entry の接続ライフサイクル相当）。
+ * Open primary and replica connections, run `fn` with them, and close both afterwards.
+ *
+ * The connections are always closed in a `finally` block; closing is scheduled through
+ * `ctx.waitUntil` so it can complete after the response has been returned, without blocking it.
+ *
+ * @typeParam T - resolved value produced by `fn`.
+ * @param hyperdrives - the primary and replica Hyperdrive bindings to connect to.
+ * @param ctx - the execution context whose `waitUntil` defers connection teardown past the response.
+ * @param fn - callback invoked with the open `primary` and `replica` connections.
+ * @param connectionOptions - extra mysql2 options forwarded to {@link hyperdriveConnectionOptions}.
+ * @returns the value resolved by `fn`.
+ * @example
+ * ```ts
+ * const data = await withMysqlConnections(
+ *   { primary: env.PRIMARY, replica: env.REPLICA },
+ *   ctx,
+ *   async ({ primary, replica }) => {
+ *     const [rows] = await replica.query('SELECT 1');
+ *     return rows;
+ *   },
+ * );
+ * ```
  */
 export async function withMysqlConnections<T>(
   hyperdrives: { primary: HyperdriveLike; replica: HyperdriveLike },

@@ -7,8 +7,11 @@ It provides the building blocks a NestJS-style API needs but that don't run on `
 - **Firebase ID-token verification** on Workers via [`jose`](https://github.com/panva/jose) (RS256 against Google's securetoken JWKS), with optional Identity Toolkit REST for `getUser` / `deleteUser`.
 - **AWS Secrets Manager** via SigV4-signed `fetch` ([`aws4fetch`](https://github.com/mhart/aws4fetch)) — no AWS SDK.
 - **Middleware**: `finalizeResponse` (Express-compatible weak ETag + JSON charset), `validate` (NestJS `ValidationPipe`-shaped 400), and zod number-coercion helpers.
-- **Deadlock retry** (`ER_LOCK_DEADLOCK` exponential backoff).
-- **HTTP helpers**: `getUserProtocol`, `getAppInfo`, `HttpStatus`.
+- **NestJS-shaped errors**: `createNestErrorHandler` / `nestNotFoundHandler` / `HttpStatus`.
+- **Deadlock retry** (`ER_LOCK_DEADLOCK` exponential backoff) and an optional **MySQL data layer** (`@rdlabo/workers-hono-kit/db`) for Hyperdrive + Drizzle.
+- **AI Gateway**: route `@ai-sdk` models through the Cloudflare AI Gateway.
+- **Stripe** Workers-native client + async webhook verification.
+- **Testing helpers** (`@rdlabo/workers-hono-kit/testing`): a Drizzle-migration-backed test database, in-memory Firebase fake, configurable test doubles, and Stripe fixtures.
 
 ## Install
 
@@ -19,17 +22,36 @@ npm install @rdlabo/workers-hono-kit
 Peer dependencies — install the ones you use:
 
 ```bash
+# Core (root export)
 npm install hono zod @hono/zod-validator jose aws4fetch
+
+# Optional, only if you use the corresponding feature:
+npm install drizzle-orm mysql2        # ./db and ./testing
+npm install ai ai-gateway-provider    # createAiGatewayProvider
 ```
 
-> **TypeScript sources, no build step.** The package is published as `.ts` via the `exports` field and is meant to be consumed by a bundler that compiles TypeScript — wrangler/esbuild, Vite, etc. — targeting `workerd` or another edge runtime. It relies only on Web-standard APIs (`fetch`, `crypto.subtle`, `Response`) available on Cloudflare Workers.
+`stripe` is bundled as a direct dependency, so the Stripe helpers work without an extra install.
+
+> **Compiled ESM, with types.** The package is published as compiled ES modules (`./dist/*.js`) plus
+> declaration files (`./dist/*.d.ts`) via the `exports` field. It depends only on Web-standard APIs
+> (`fetch`, `crypto.subtle`, `Response`) available on Cloudflare Workers (`workerd`) and other edge
+> runtimes, and requires Node.js ≥ 20 for tooling. Three entry points are exposed:
+>
+> | Subpath | Import | Use |
+> | --- | --- | --- |
+> | `.` | `@rdlabo/workers-hono-kit` | Web-standard helpers (middleware, HTTP, Firebase, AWS, AI, Stripe, KV). |
+> | `./db` | `@rdlabo/workers-hono-kit/db` | MySQL data layer (mysql2 + Drizzle). |
+> | `./testing` | `@rdlabo/workers-hono-kit/testing` | Test helpers (mysql2 + Drizzle + fakes/fixtures). |
 
 ## API
+
+### Root — `@rdlabo/workers-hono-kit`
 
 | Export | Description |
 | --- | --- |
 | `finalizeResponse()` | Middleware that adds an Express-compatible weak `ETag` and JSON `charset=utf-8`. |
 | `validate(target, schema, options?)` | Zod validator → NestJS `ValidationPipe`-shaped `400` (`{ statusCode, message[], error }`). `options.onValidationError(err, c)` to report (e.g. Sentry). |
+| `createSentryValidate(sentry)` | Returns a `validate` variant that reports validation failures to an injected Sentry-like client (tags + context), avoiding a hard `@sentry/cloudflare` dependency. |
 | `zNum` / `zNumWithDefault` / `zNumOptional` / `zNumNullable` | Number-coercion zod schemas (mirror class-transformer `@Transform`). |
 | `getAuthenticationSecret<T>(options, secretId)` / `AwsSecretsOptions` | Fetch a secret from AWS Secrets Manager (SigV4 `fetch`, per-isolate cache). |
 | `getCloudFrontSignedUrl(url, privateKeyPem, keyPairId, dateLessThan)` | CloudFront signed URL (canned policy, RSA-SHA1, URL-safe base64) — Web Crypto reimpl of `@aws-sdk/cloudfront-signer`, byte-identical query order. |
@@ -40,14 +62,48 @@ npm install hono zod @hono/zod-validator jose aws4fetch
 | `retryWhenDeadlock(fn, retries?, delay?)` | Retry on MySQL `ER_LOCK_DEADLOCK` with exponential backoff. |
 | `getUserProtocol(c)` / `IUserProtocol` | Read client IP / UA (`CF-Connecting-IP` → `X-Forwarded-For`). |
 | `getAppInfo(c)` / `AppInfo` | Read `x-amz-meta-version` / `x-amz-meta-uuid`. |
+| `resolveAppEnv(env)` / `isProductionEnv(env)` / `AppEnv` | Resolve `'development'` / `'production'` from `env.APP_ENV` (defaults to `'production'` for safety). |
 | `HttpStatus` | HTTP status enum identical to NestJS `@nestjs/common`. |
 | `createNestErrorHandler(options?)` / `NestErrorHandlerOptions` | `app.onError()` handler that maps a thrown `HTTPException` to the NestJS exception-filter body (`{ statusCode, message, error? }`; `401` omits `error`). Configurable field order, reason phrases, error predicate, and unhandled-error report hook. |
 | `nestNotFoundHandler(c)` | `app.notFound()` handler with the Express/Nest default `{ message: 'Cannot METHOD path', error, statusCode }` 404 body. |
 | `NEST_REASON_PHRASES` | `{ 400, 401, 403, 404 }` → NestJS reason phrases. |
 | `createAuthMiddleware(options)` / `AuthMiddlewareOptions` | Factory for a Firebase-token auth middleware: reads the token header, verifies, resolves the DB user id, and stashes the result on the context. Omit `resolveUserId` for a token-only (login) guard. |
-| `ErrorReporter` / `ErrorReportContext` | Types for a `container.reportError`-style unhandled-error reporter (e.g. wired to Sentry), paired with `createNestErrorHandler`'s `onUnhandledError`. |
-| `KVCache` / `KVNamespace` / `KVCacheOptions` | Workers-KV cache-aside helper (key `appName+version+table_type_column`, sha256 for string ids, TTL clamped ≥60s). `appName`/`version` per repo. |
-| `createStripeClient(secret, opts?)` / `verifyStripeWebhook(...)` / `CreateStripeClientOptions` | Workers-native Stripe client (fetch transport) + async webhook verification (SubtleCrypto). `apiVersion` optional (pin per `/api` parity). |
+| `ErrorReporter` / `ErrorReportContext` | Types for a `reportError`-style unhandled-error reporter (e.g. wired to Sentry), paired with `createNestErrorHandler`'s `onUnhandledError`. |
+| `createAiGatewayProvider(config)` / `AiGatewayConfig` / `AiGatewayProvider` | Route `@ai-sdk` models through the Cloudflare AI Gateway, via either a Workers `AI` binding or REST credentials (`accountId` / `gateway` / `token`). |
+| `KVCache` / `KVNamespace` / `KVCacheOptions` | Workers-KV cache-aside helper (key `appName+version+table_type_column`, sha256 for string ids, TTL clamped ≥60s). Set `appName` / `version` per application. |
+| `createStripeClient(secret, opts?)` / `verifyStripeWebhook(...)` / `CreateStripeClientOptions` | Workers-native Stripe client (fetch transport) + async webhook verification (SubtleCrypto). `apiVersion` optional (pin to a fixed Stripe API version). |
+
+### Data layer — `@rdlabo/workers-hono-kit/db`
+
+Requires the `drizzle-orm` and `mysql2` peers. Reads run against a replica via raw SQL; writes/transactions run against the primary through the Drizzle ORM with deadlock retry. The kit deliberately does not depend on the ORM's type identity — you pass the Drizzle instance in.
+
+| Export | Description |
+| --- | --- |
+| `createHyperdriveDatabase(options)` | `DisposableDatabase` that lazily opens primary/replica connections from Hyperdrive bindings per request; `dispose()` closes them. |
+| `createMysqlDatabase(options)` | Assemble a `Database` from an already-connected Drizzle ORM + replica `QueryRunner`. |
+| `Database` / `DisposableDatabase` / `QueryRunner` / `TxOf` | The `read` / `write` / `transaction` API and its supporting types. |
+| `hyperdriveConnectionOptions(hyperdrive, overrides?)` / `HyperdriveLike` / `ExecutionContextLike` | Build mysql2 `createConnection` options from a Hyperdrive binding (`disableEval`, `decimalNumbers`, `timezone '+09:00'` by default). |
+| `withMysqlConnections(...)` | Open primary/replica connections, run a function, close them in `finally` (via `ctx.waitUntil`). |
+| `retryWhenDeadlock(fn, retries?, delay?)` | Same deadlock-retry helper as the root export. |
+| `insertIdOf` / `affectedRowsOf` / `insertedIdsOf` / `DzWriteResult` | Extract `insertId` / `affectedRows` (and derive contiguous bulk-insert ids) from a mysql2 write result. |
+| `toJstDate` / `jstTimestampParams` / `jstDatetimeParams` / `jstDateParams` | JST date/time normalization applied at the Drizzle `customType` column boundary. |
+| `DRIZZLE_ORM_OPTIONS` / `honoDrizzleConfig(options)` / `HonoDrizzleConfigOptions` | Shared Drizzle casing (`snake_case`) for both the runtime `drizzle()` call and `drizzle.config.ts`, keeping config ↔ runtime in sync. |
+
+### Testing — `@rdlabo/workers-hono-kit/testing`
+
+Requires the `drizzle-orm` and `mysql2` peers. Consolidates duplicated test boilerplate.
+
+| Export | Description |
+| --- | --- |
+| `createTestDb(options)` / `TestDb` / `CreateTestDbOptions` / `TestDbConnection` | Test database built from committed Drizzle migrations as the single source of truth: `resetSchema` / `createTestPool` / `truncateAll` / `seed` / `mysqlReachable`. |
+| `FakeFirebaseVerifier` | In-memory `FirebaseVerifier` for offline route tests (`register` / `verifyIdToken` / `getUser` / `deleteUser`). |
+| `createPoolDatabase(options)` / `CreatePoolDatabaseOptions` | A `Database` backed by a single pool used as both primary and replica. |
+| `createNoopDatabase()` | A `Database` stub that throws on `write` / `transaction` to catch accidental DB use in DB-less routes. |
+| `authHeaders(token, opts?)` | Build interceptor-compatible auth headers for requests. |
+| `registerFirebaseToken(firebase, uid, record?, token?)` | Register a token in a `FakeFirebaseVerifier` (no DB). |
+| `provisionUser(pool, firebase, opts)` | Register a token and provision a conventional `users(id, firebase_uid, agree)` row; returns the user id (idempotent). |
+| `configurableFake(impl, name?)` | Build a test double from a partial implementation; un-stubbed members throw `"${name}.${method} not configured"`. |
+| `fakeApiList` / `fakePaymentIntent` / `fakeStripeEvent` / `fakeCheckoutSession` / `fakeCustomer` / `fakePrice` / `fakeSubscription` | Stripe object fixtures with sensible defaults, overridable per test. |
 
 ## Usage
 
@@ -144,8 +200,8 @@ return c.json(body, HttpStatus.CREATED);
 
 `createNestErrorHandler()` renders a thrown `HTTPException` as the NestJS exception-filter
 body, and `nestNotFoundHandler` gives the Express/Nest default 404. The defaults match the
-NestJS canonical shape (`{ statusCode, message, error? }`, `401` omits `error`); each repo
-keeps its own byte-parity via options.
+NestJS canonical shape (`{ statusCode, message, error? }`, `401` omits `error`); the options
+let you reproduce any byte-for-byte variation an existing API expects.
 
 ```ts
 import { createNestErrorHandler, nestNotFoundHandler } from '@rdlabo/workers-hono-kit';
@@ -153,7 +209,7 @@ import { createNestErrorHandler, nestNotFoundHandler } from '@rdlabo/workers-hon
 app.notFound(nestNotFoundHandler);
 app.onError(createNestErrorHandler());
 
-// Repo-specific parity deltas:
+// Application-specific parity deltas:
 app.onError(
   createNestErrorHandler({
     fieldOrder: 'message-first', // emit { message, error, statusCode } instead of statusCode-first
@@ -166,7 +222,7 @@ app.onError(
 ### Auth middleware
 
 Encodes the shared skeleton (read token header → verify → `getAppInfo` → resolve user id →
-set context, with `console.error` + a configurable failure on error). Inject the repo's
+set context, with `console.error` + a configurable failure on error). Inject your own
 verify/resolver, context-variable names, and failure mode.
 
 `createAuthMiddleware<Env, Verified, Id>` is generic over your Hono `Env`, so `c.set(...)` in
@@ -195,12 +251,55 @@ const tokenAuth = createAuthMiddleware<AppEnv, UserRecord>({
 });
 ```
 
+### AI Gateway
+
+Route `@ai-sdk` models through the Cloudflare AI Gateway — either with a Workers `AI` binding
+(production / `wrangler dev`) or with REST credentials (non-Workers contexts).
+
+```ts
+import { createAiGatewayProvider } from '@rdlabo/workers-hono-kit';
+import { openai } from '@ai-sdk/openai';
+
+// Binding form (Workers):
+const provider = createAiGatewayProvider({ binding: env.AI.gateway('my-gateway') });
+
+// REST form (anywhere):
+const rest = createAiGatewayProvider({
+  accountId: env.CF_ACCOUNT_ID,
+  gateway: 'my-gateway',
+  token: env.CF_AIG_TOKEN,
+});
+
+const model = provider.aigateway(openai('gpt-4o-mini'));
+```
+
+### MySQL data layer (Hyperdrive + Drizzle)
+
+```ts
+import { createHyperdriveDatabase, hyperdriveConnectionOptions } from '@rdlabo/workers-hono-kit/db';
+import { drizzle } from 'drizzle-orm/mysql2';
+import { DRIZZLE_ORM_OPTIONS } from '@rdlabo/workers-hono-kit/db';
+
+const db = createHyperdriveDatabase({
+  primaryHyperdrive: env.HYPERDRIVE,
+  replicaHyperdrive: env.HYPERDRIVE_REPLICA,
+  createOrm: (conn) => drizzle(conn, { ...DRIZZLE_ORM_OPTIONS, schema }),
+});
+
+try {
+  const rows = await db.read('SELECT * FROM users WHERE id = ?', [id]); // replica, raw SQL
+  await db.write((dz) => dz.insert(users).values({ name })); // primary, deadlock-retried
+} finally {
+  await db.dispose();
+}
+```
+
 ### KV cache
 
 ```ts
 import { KVCache } from '@rdlabo/workers-hono-kit';
 
-const cache = new KVCache(env.CACHE, { appName: 'myapp' }); // version defaults to 'v8_'
+const cache = new KVCache(env.CACHE, { appName: 'myapp' }); // version prefix defaults to 'v8_'
 await cache.set('users', 'byId', userId, user, 600);
 const hit = await cache.get<User>('users', 'byId', userId);
 ```
@@ -212,6 +311,21 @@ import { createStripeClient, verifyStripeWebhook } from '@rdlabo/workers-hono-ki
 
 const stripe = createStripeClient(secret); // or { apiVersion: '2024-04-10' } to pin
 const event = await verifyStripeWebhook(secret, webhookSecret, rawBody, c.req.header('stripe-signature') ?? '');
+```
+
+### Testing
+
+```ts
+import { createTestDb, FakeFirebaseVerifier, configurableFake } from '@rdlabo/workers-hono-kit/testing';
+
+const testDb = createTestDb({ dbName: 'myapp_test', migrationsFolder: './drizzle' });
+await testDb.resetSchema();
+const pool = testDb.createTestPool();
+
+const firebase = new FakeFirebaseVerifier();
+firebase.register('uid-1', { email: 'a@example.com' });
+
+const gateway = configurableFake<PaymentGateway>({ charge: async () => ({ ok: true }) }, 'PaymentGateway');
 ```
 
 ## Local development / linking
@@ -240,6 +354,7 @@ npm install
 npm run typecheck   # tsc --noEmit
 npm run lint        # eslint
 npm test            # vitest
+npm run build       # tsc -p tsconfig.build.json → dist/
 ```
 
 ## License

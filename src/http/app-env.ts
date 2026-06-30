@@ -1,20 +1,53 @@
+/**
+ * The resolved runtime environment of the Worker.
+ */
 export type AppEnv = 'development' | 'production';
 
 /**
- * 実行環境（development / production）を解決する。フリート共通の判定。
+ * Resolve the runtime environment (development or production) from the Worker `env` binding.
  *
- * NestJS `/api` は実行時 FS の `.git` 有無で判定し「git が throw → catch → 本番」としていた。
- * Workers は実行時に FS / child_process が無いため同じ手は使えない。代わりに dev シグナルを
- * **コミット済みの起動コマンド**に置く: `wrangler dev --var APP_ENV:development`（`deploy` は無注入）。
- * よって `env.APP_ENV === 'development'` の時だけ development、それ以外（注入無し＝本番デプロイ）は
- * production に倒す。これは `/api` の「absence/catch = 本番（安全側）」と同じ意味論。
+ * @remarks
+ * Cloudflare Workers have no filesystem or `child_process` at runtime, so the environment cannot be
+ * inferred from the presence of a `.git` directory the way a Node/NestJS process might. Instead, the
+ * development signal is carried in the committed launch command: `wrangler dev --var APP_ENV:development`
+ * injects `APP_ENV`, while `wrangler deploy` injects nothing. Only `env.APP_ENV === 'development'`
+ * resolves to `'development'`; every other case (including a missing binding, i.e. a production deploy)
+ * resolves to `'production'`. This "absence defaults to production" semantic keeps the safe side as the
+ * default.
  *
- * `env` 由来なので fetch / scheduled どちらの文脈でも使え、リクエストヘッダ由来でないため詐称されない。
+ * Because it reads from `env` rather than a request header, it works in both `fetch` and `scheduled`
+ * contexts and cannot be spoofed by an incoming request.
+ *
+ * @param env - The Worker environment binding, or `null`/`undefined` when unavailable.
+ * @returns `'development'` only when `env.APP_ENV` is exactly `'development'`; otherwise `'production'`.
+ *
+ * @example
+ * ```ts
+ * export default {
+ *   fetch(req, env) {
+ *     if (resolveAppEnv(env) === 'development') {
+ *       // enable verbose logging
+ *     }
+ *   },
+ * };
+ * ```
  */
 export function resolveAppEnv(env: { APP_ENV?: string } | null | undefined): AppEnv {
   return env?.APP_ENV === 'development' ? 'development' : 'production';
 }
 
-/** production 判定のショートハンド。 */
+/**
+ * Shorthand for checking whether the resolved environment is production.
+ *
+ * @param env - The Worker environment binding, or `null`/`undefined` when unavailable.
+ * @returns `true` when {@link resolveAppEnv} resolves to `'production'`.
+ *
+ * @example
+ * ```ts
+ * if (isProductionEnv(env)) {
+ *   // skip dev-only diagnostics
+ * }
+ * ```
+ */
 export const isProductionEnv = (env: { APP_ENV?: string } | null | undefined): boolean =>
   resolveAppEnv(env) === 'production';

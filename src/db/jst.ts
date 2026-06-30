@@ -1,27 +1,45 @@
-// JST 日時の整形を「DB 書き込みの副作用」として列の境界に寄せるための共有部品。
-// drizzle-orm の値・型は import しない（kit の脱・型同一性方針）。kit で完成した customType 列を
-// export すると、消費側と drizzle-orm のコピーが分かれた場合に `.default(sql\`…\`)` 等で `SQL` の
-// private プロパティ（shouldInlineParams）が nominal 不一致になり型衝突する（実測で確認）。そのため
-// 列生成は消費側の `customType` に委ね、kit は params とヘルパだけ供給する:
-//
-//   import { customType } from 'drizzle-orm/mysql-core';
-//   import { jstTimestampParams, jstDateParams } from '@rdlabo/workers-hono-kit/db';
-//   export const jstTimestamp = (name: string, opts?: { fsp?: number }) =>
-//     customType<{ data: string | Date; driverData: string | Date }>(jstTimestampParams(opts?.fsp))(name);
-//   export const jstDate = (name: string) =>
-//     customType<{ data: string | null; driverData: string | null }>(jstDateParams())(name);
-//
-// timestamp/datetime は toDriver を置かず Date を素通し → 接続の `timezone:'+09:00'`（hyperdrive
-// 既定）で mysql2 が JST 整形、整形済み文字列も素通し。Drizzle ネイティブ `mode:'date'` は Date を
-// tz 層より前に UTC 文字列化して −9h で壊れるため使わない（customType pass-through が唯一クリーン）。
-// date 列はクライアントの ISO/空文字を MySQL DATE が弾く＋JST 日跨ぎ正規化が要るので toJstDate を残す。
+/**
+ * Shared building blocks for normalizing JST (Asia/Tokyo) date/time values.
+ *
+ * @remarks
+ * JST normalization is applied at the column boundary as a write-time side effect, and neither
+ * values nor types from `drizzle-orm` are imported here on purpose. Exporting a fully-built
+ * `customType` column from the kit would cause type collisions when the kit and the consumer
+ * resolve separate copies of `drizzle-orm` (the private `SQL` brand stops being nominally
+ * compatible). Instead the kit ships only the params and helpers, and the consumer builds the
+ * column with its own `customType`:
+ *
+ * ```ts
+ * import { customType } from 'drizzle-orm/mysql-core';
+ * import { jstTimestampParams, jstDateParams } from '@rdlabo/workers-hono-kit/db';
+ *
+ * export const jstTimestamp = (name: string, opts?: { fsp?: number }) =>
+ *   customType<{ data: string | Date; driverData: string | Date }>(jstTimestampParams(opts?.fsp))(name);
+ * export const jstDate = (name: string) =>
+ *   customType<{ data: string | null; driverData: string | null }>(jstDateParams())(name);
+ * ```
+ *
+ * `timestamp`/`datetime` columns omit `toDriver` and pass `Date` values straight through, so the
+ * connection's `timezone: '+09:00'` default makes mysql2 format them as JST; pre-formatted strings
+ * also pass through. Drizzle's native `mode: 'date'` is avoided because it stringifies `Date` to
+ * UTC before the timezone layer, shifting values by -9h. `date` columns keep `toJstDate` because
+ * MySQL `DATE` rejects ISO/empty strings and a JST day-boundary normalization is required.
+ */
 
 const JST_OFFSET_MS = 9 * 60 * 60 * 1000;
 
 /**
- * クライアント送出の日付（ISO 8601 `...Z` / `YYYY-MM-DD` / 空文字）を MySQL DATE 用の
- * `YYYY-MM-DD`（JST）へ正規化。nullish/空/解釈不能は null。MySQL DATE は ISO を弾く
- * （ER_TRUNCATED_WRONG_VALUE）ため driver では代替できず、列の toDriver に必要。
+ * Normalize a client-supplied date to the `YYYY-MM-DD` (JST) form accepted by a MySQL `DATE` column.
+ *
+ * Accepts ISO 8601 (`...Z`), `YYYY-MM-DD`, or an empty string. Nullish, empty, or unparseable input
+ * resolves to `null`.
+ *
+ * @remarks
+ * MySQL `DATE` rejects ISO strings with `ER_TRUNCATED_WRONG_VALUE`, so this cannot be handled by the
+ * driver alone; it is needed as the `toDriver` transform for a `date` column.
+ *
+ * @param value - the raw date string from the client (ISO 8601, `YYYY-MM-DD`, or empty), or nullish.
+ * @returns the JST calendar date as `YYYY-MM-DD`, or `null` when the input is empty or unparseable.
  */
 export function toJstDate(value: string | null | undefined): string | null {
   if (!value) {
@@ -36,17 +54,65 @@ export function toJstDate(value: string | null | undefined): string | null {
   return `${jst.getUTCFullYear()}-${p(jst.getUTCMonth() + 1)}-${p(jst.getUTCDate())}`;
 }
 
-/** `customType` に渡す params: `timestamp(fsp)` 列（created_at 群）。Date 素通し（pass-through）。 */
+/**
+ * Build the params for a `customType` backing a MySQL `timestamp` column with `Date` pass-through.
+ *
+ * The column omits `toDriver`, so `Date` values flow straight to mysql2 and are formatted as JST by
+ * the connection's `timezone: '+09:00'` default.
+ *
+ * @param fsp - optional fractional-seconds precision; when provided, emits `timestamp(fsp)`.
+ * @returns the `customType` params object exposing the column's `dataType`.
+ * @example
+ * ```ts
+ * import { customType } from 'drizzle-orm/mysql-core';
+ * import { jstTimestampParams } from '@rdlabo/workers-hono-kit/db';
+ *
+ * const jstTimestamp = (name: string) =>
+ *   customType<{ data: string | Date; driverData: string | Date }>(jstTimestampParams())(name);
+ * ```
+ */
 export const jstTimestampParams = (fsp?: number): { dataType: () => string } => ({
   dataType: () => (fsp != null ? `timestamp(${fsp})` : 'timestamp'),
 });
 
-/** `customType` に渡す params: `datetime` 列（payment.limit_at 等）。Date 素通し（pass-through）。 */
+/**
+ * Build the params for a `customType` backing a MySQL `datetime` column with `Date` pass-through.
+ *
+ * Behaves like {@link jstTimestampParams} but emits a `datetime` data type; `Date` values pass
+ * through and are formatted as JST by the connection's `timezone: '+09:00'` default.
+ *
+ * @param fsp - optional fractional-seconds precision; when provided, emits `datetime(fsp)`.
+ * @returns the `customType` params object exposing the column's `dataType`.
+ * @example
+ * ```ts
+ * import { customType } from 'drizzle-orm/mysql-core';
+ * import { jstDatetimeParams } from '@rdlabo/workers-hono-kit/db';
+ *
+ * const jstDatetime = (name: string) =>
+ *   customType<{ data: string | Date; driverData: string | Date }>(jstDatetimeParams())(name);
+ * ```
+ */
 export const jstDatetimeParams = (fsp?: number): { dataType: () => string } => ({
   dataType: () => (fsp != null ? `datetime(${fsp})` : 'datetime'),
 });
 
-/** `customType` に渡す params: `date` 列（expiry_date 等）。toJstDate で文字列を正規化。 */
+/**
+ * Build the params for a `customType` backing a MySQL `date` column with JST normalization.
+ *
+ * Unlike the timestamp/datetime params, this defines a `toDriver` transform that runs
+ * {@link toJstDate} so client-supplied ISO/empty strings are normalized to a JST `YYYY-MM-DD` value
+ * the column accepts.
+ *
+ * @returns the `customType` params object exposing the column's `dataType` and `toDriver`.
+ * @example
+ * ```ts
+ * import { customType } from 'drizzle-orm/mysql-core';
+ * import { jstDateParams } from '@rdlabo/workers-hono-kit/db';
+ *
+ * const jstDate = (name: string) =>
+ *   customType<{ data: string | null; driverData: string | null }>(jstDateParams())(name);
+ * ```
+ */
 export const jstDateParams = (): {
   dataType: () => string;
   toDriver: (value: string | null) => string | null;
