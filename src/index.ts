@@ -1,6 +1,14 @@
-// @rdlabo/workers-hono-kit — フリート共通のインフラ層ヘルパ（receptray / winecode / foodlabel）。
-// ドメイン・DB・各 repo 固有の parity 差異（auth エラー status/body、secretId、Secret スキーマ）は
-// 各 repo 側に残し、ここには「設定注入で汎用化できるインフラ」だけを置く。
+/**
+ * `@rdlabo/workers-hono-kit` — infrastructure-layer helpers for Hono on Cloudflare Workers.
+ *
+ * This package collects reusable, configuration-injected building blocks (HTTP middleware,
+ * caching, Stripe, Drizzle helpers, AI Gateway, AWS/Firebase integrations) that can be shared
+ * across services. Domain logic, database schemas, and application-specific behavior are
+ * intentionally left to the consuming application; only generic infrastructure that can be made
+ * reusable through dependency/configuration injection lives here.
+ *
+ * @packageDocumentation
+ */
 
 // middleware
 export { finalizeResponse } from './middleware/finalize-response.js';

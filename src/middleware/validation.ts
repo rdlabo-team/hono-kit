@@ -2,31 +2,45 @@ import { zValidator } from '@hono/zod-validator';
 import type { Context } from 'hono';
 import type { ZodType } from 'zod';
 
-/** zod v3(ZodError) / v4(core $ZodError) どちらの error でも受けられる最小形 */
+/**
+ * Minimal structural shape that accepts either a zod v3 `ZodError` or a zod v4 core `$ZodError`.
+ *
+ * @remarks
+ * Declaring only the `issues` array (with `path` and `message`) keeps the kit independent of a
+ * specific zod major version while still exposing enough to format human-readable messages.
+ */
 export interface ZodErrorLike {
+  /** The validation issues reported by zod, each with a property path and a message. */
   issues: readonly { path: PropertyKey[]; message: string }[];
 }
 
+/** Request part that a validator inspects, mirroring the targets supported by `@hono/zod-validator`. */
 export type ValidationTarget = 'json' | 'query' | 'param' | 'header' | 'cookie' | 'form';
 
+/** Options controlling the optional side effects of {@link validate}. */
 export interface ValidateOptions {
   /**
-   * 検証失敗時のフック（Sentry 通報など）。**検証の挙動は変えない** — レスポンスは常に
-   * NestJS ValidationPipe 同形の 400 を返す。例外を投げても握り潰す。
-   * 既定は no-op（receptray 互換 = 4xx を通報しない）。foodlabel は Sentry 実通報を差し込む。
+   * Hook invoked when validation fails (e.g. to report to Sentry).
+   *
+   * @remarks
+   * This never changes validation behavior — the response is always a NestJS `ValidationPipe`-shaped
+   * 400. Exceptions thrown by the hook are swallowed. The default is a no-op (4xx errors are not
+   * reported); pass a hook to forward failures to an error tracker.
+   *
+   * @param error - The zod error describing the failed validation.
+   * @param c - The Hono context for the failing request.
    */
   onValidationError?: (error: ZodErrorLike, c: Context) => void;
 }
 
 /**
- * Zod 検証ミドルウェア（フリート共通 = receptray/winecode hono と同一仕様）。
- * 失敗時は NestJS の ValidationPipe と同形の body を返す:
- *   { statusCode: 400, message: string[], error: 'Bad Request' }
+ * Convert a {@link ZodErrorLike} into NestJS `ValidationPipe`-style message strings.
  *
- * NOTE(parity): message の文字列内容は class-validator と Zod で異なる。各 repo の固定 app の
- * 正常系では DTO 検証 400 は発生しない前提（ビジネス 400 は各エンドポイントで HttpError 忠実再現）。
+ * Each issue becomes `"<dotted.path>: <message>"`, or just `"<message>"` when the path is empty.
+ *
+ * @param error - The zod error to flatten.
+ * @returns One message string per issue.
  */
-
 function zodToMessages(error: ZodErrorLike): string[] {
   return error.issues.map((issue) => {
     const path = issue.path.map(String).join('.');
@@ -34,6 +48,35 @@ function zodToMessages(error: ZodErrorLike): string[] {
   });
 }
 
+/**
+ * Create a zod validation middleware that returns a NestJS `ValidationPipe`-shaped 400 on failure.
+ *
+ * On success the parsed value is made available through `@hono/zod-validator` as usual. On failure
+ * the response body is `{ statusCode: 400, message: string[], error: 'Bad Request' }`, the failing
+ * field paths are logged via `console.warn` (so 400s are visible in `wrangler dev`/Workers logs),
+ * and {@link ValidateOptions.onValidationError} is invoked if provided.
+ *
+ * @remarks
+ * The exact message strings differ from class-validator because they are produced by zod, but the
+ * envelope shape matches NestJS so clients can parse failures identically.
+ *
+ * @typeParam T - The type produced by the zod schema.
+ * @param target - The request part to validate.
+ * @param schema - The zod schema to validate the target against.
+ * @param options - Optional hooks; see {@link ValidateOptions}.
+ * @returns A Hono middleware that validates `target` and short-circuits with a 400 on failure.
+ *
+ * @example
+ * ```ts
+ * import { z } from 'zod';
+ * import { validate } from '@rdlabo/workers-hono-kit';
+ *
+ * app.post('/users', validate('json', z.object({ name: z.string() })), (c) => {
+ *   const { name } = c.req.valid('json');
+ *   return c.json({ name });
+ * });
+ * ```
+ */
 export function validate<T>(target: ValidationTarget, schema: ZodType<T>, options?: ValidateOptions) {
   return zValidator(target, schema, (result, c) => {
     if (!result.success) {
@@ -55,21 +98,52 @@ export function validate<T>(target: ValidationTarget, schema: ZodType<T>, option
   });
 }
 
-/** Sentry の最小形（`@sentry/cloudflare` 等への直接依存を避けるための構造型）。 */
+/**
+ * Minimal structural shape of a Sentry scope, covering only the methods this kit calls.
+ *
+ * @remarks
+ * Declaring the shape structurally avoids a direct dependency on `@sentry/cloudflare`; any object
+ * exposing these methods (such as the real Sentry scope) is accepted.
+ */
 export interface SentryScopeLike {
+  /** Attach a string tag to the current scope. */
   setTag(key: string, value: string): void;
+  /** Attach (or clear, with `null`) a structured context entry on the current scope. */
   setContext(key: string, context: Record<string, unknown> | null): void;
 }
+
+/**
+ * Minimal structural shape of the Sentry client, covering only the methods this kit calls.
+ *
+ * @remarks
+ * Like {@link SentryScopeLike}, this avoids a hard dependency on `@sentry/cloudflare`.
+ */
 export interface SentryLike {
+  /** Run a callback with an isolated scope, restoring the previous scope afterward. */
   withScope(callback: (scope: SentryScopeLike) => void): void;
+  /** Report an exception to Sentry. */
   captureException(error: unknown): void;
 }
 
 /**
- * DTO 検証 400 を Sentry に通報する `validate` を返すファクトリ（foodlabel/tipsys/winecode で重複していた
- * reportValidationToSentry を集約）。kit は `@sentry/cloudflare` に依存せず、Sentry モジュールを注入する。
- * 通報は `tag error.type=dto_validation` ＋ `context validation={errorCount, errors}`（各 /api の
- * sentry-validation.pipe.ts 準拠）。検証の挙動・レスポンスは `validate` と同一（通報は副作用のみ）。
+ * Create a {@link validate}-like factory that additionally reports DTO validation 400s to Sentry.
+ *
+ * The returned function has the same signature and behavior as {@link validate}; reporting is a pure
+ * side effect that does not alter validation behavior or the response. Each report is tagged with
+ * `error.type=dto_validation` and carries a `validation` context of `{ errorCount, errors }`.
+ *
+ * @param sentry - A Sentry-like client used to capture validation failures; see {@link SentryLike}.
+ * @returns A function `(target, schema) => MiddlewareHandler` mirroring {@link validate}.
+ *
+ * @example
+ * ```ts
+ * import * as Sentry from '@sentry/cloudflare';
+ * import { z } from 'zod';
+ * import { createSentryValidate } from '@rdlabo/workers-hono-kit';
+ *
+ * const validate = createSentryValidate(Sentry);
+ * app.post('/users', validate('json', z.object({ name: z.string() })), handler);
+ * ```
  */
 export function createSentryValidate(sentry: SentryLike) {
   const onValidationError = (error: ZodErrorLike): void => {

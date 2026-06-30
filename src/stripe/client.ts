@@ -1,17 +1,33 @@
 import Stripe from 'stripe';
 
 /**
- * Stripe クライアント生成（フリート共通 = receptray/tipsys hono）。Cloudflare Workers には Node の
- * http スタックが無いため、Stripe SDK の fetch ベース HttpClient を使う。
- *
- * `apiVersion` は **任意**: 各 repo の `/api`（NestJS）と挙動を一致させるため、固定したい repo は
- * 渡し（例 tipsys は `'2024-04-10'`）、SDK 既定で良い repo は省く（例 receptray）。
+ * Options for {@link createStripeClient}.
  */
 export interface CreateStripeClientOptions {
-  /** 固定する Stripe API バージョン。省略すると SDK 既定。 */
+  /**
+   * Stripe API version to pin the client to. When omitted, the SDK's built-in default is used.
+   * Pin it when you need stable, reproducible API behavior independent of SDK upgrades.
+   */
   apiVersion?: string;
 }
 
+/**
+ * Create a Stripe client configured to run on Cloudflare Workers.
+ *
+ * @remarks
+ * Workers has no Node.js `http` stack, so the client is built with `Stripe.createFetchHttpClient()`
+ * (a `fetch`-based HTTP client) instead of the SDK's default Node transport.
+ *
+ * @param secret - Stripe secret API key.
+ * @param options - Optional client configuration; see {@link CreateStripeClientOptions}.
+ * @returns A configured {@link Stripe} instance.
+ * @throws Error when `secret` is empty.
+ * @example
+ * ```ts
+ * const stripe = createStripeClient(env.STRIPE_SECRET, { apiVersion: '2024-04-10' });
+ * const customer = await stripe.customers.retrieve(customerId);
+ * ```
+ */
 export function createStripeClient(secret: string, options: CreateStripeClientOptions = {}): Stripe {
   if (!secret) {
     throw new Error('Stripe secret is not set');
@@ -24,9 +40,30 @@ export function createStripeClient(secret: string, options: CreateStripeClientOp
 }
 
 /**
- * Webhook 署名の検証。Workers では同期版 `constructEvent` が使えない（SubtleCrypto が非同期）ため
- * `constructEventAsync` + `SubtleCryptoProvider` を使う。`secret` は署名検証には無関係だが、検証用の
- * クライアント生成に必要（API コールはしない）。
+ * Verify a Stripe webhook signature and return the parsed event.
+ *
+ * @remarks
+ * Uses `constructEventAsync` together with `Stripe.createSubtleCryptoProvider()` because the Workers
+ * crypto API (SubtleCrypto) is asynchronous and the synchronous `constructEvent` is unavailable.
+ * The `secret` is not used by signature verification itself, but a client must be constructed to
+ * perform the check; no Stripe API call is made.
+ *
+ * @param secret - Stripe secret API key, used only to construct the verifying client.
+ * @param webhookSecret - Endpoint signing secret used to validate the signature.
+ * @param payload - Raw request body exactly as received (string or `ArrayBuffer`).
+ * @param signature - Value of the `Stripe-Signature` request header.
+ * @returns The verified {@link Stripe.Event}.
+ * @throws Error when `webhookSecret` is empty, or when `secret` is empty (the verifying client cannot be constructed).
+ * @throws Stripe.errors.StripeSignatureVerificationError when the signature does not match.
+ * @example
+ * ```ts
+ * const event = await verifyStripeWebhook(
+ *   env.STRIPE_SECRET,
+ *   env.STRIPE_WEBHOOK_SECRET,
+ *   await request.text(),
+ *   request.headers.get('stripe-signature')!,
+ * );
+ * ```
  */
 export function verifyStripeWebhook(
   secret: string,

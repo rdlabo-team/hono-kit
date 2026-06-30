@@ -1,17 +1,22 @@
 import { z } from 'zod';
 
 /**
- * `/api` の class-transformer @Transform（number-transform.util.ts）を Zod preprocess で忠実再現する。
- * path/query は常に文字列で来るため数値強制が必要。空白のみ文字列は NaN にして後段の数値スキーマで弾く
- * （class-validator の @IsInt/@IsNumber が NaN を拒否する挙動と一致。zod v4 は z.number() が NaN を既定拒否）。
+ * Zod preprocessors that coerce string path/query parameters into numbers.
+ *
+ * @remarks
+ * These mirror a class-transformer `@Transform(() => Number)` coercion: path and query parameters
+ * always arrive as strings, so they must be forced to numbers before number validation. Whitespace-only
+ * strings are mapped to `NaN` so the downstream number schema rejects them (matching class-validator's
+ * `@IsInt`/`@IsNumber`, which reject `NaN`; zod v4's `z.number()` also rejects `NaN` by default).
  */
 
+/** Return `true` when `value` is a string that is empty or contains only whitespace. */
 const isBlankString = (value: unknown): value is string => typeof value === 'string' && value.trim() === '';
 
-// toNumber: 空白文字列 → NaN、それ以外 → Number(value)
+// toNumber: blank string → NaN, otherwise → Number(value).
 const rawToNumber = (value: unknown): unknown => (isBlankString(value) ? Number(undefined) : Number(value));
 
-// toNumberWithDefault: undefined/'' → default、空白 → NaN、else Number
+// toNumberWithDefault: undefined/'' → default, blank → NaN, else Number.
 const rawToNumberWithDefault =
   (defaultValue: number) =>
   (value: unknown): unknown => {
@@ -24,7 +29,7 @@ const rawToNumberWithDefault =
     return Number(value);
   };
 
-// toOptionalNumber: undefined/null/'' → undefined、空白 → NaN、else Number
+// toOptionalNumber: undefined/null/'' → undefined, blank → NaN, else Number.
 const rawToOptionalNumber = (value: unknown): unknown => {
   if (value === undefined || value === null || value === '') {
     return undefined;
@@ -35,7 +40,7 @@ const rawToOptionalNumber = (value: unknown): unknown => {
   return Number(value);
 };
 
-// toNullableNumber: null/undefined → passthrough、'' → undefined、空白 → NaN、else Number
+// toNullableNumber: null/undefined → passthrough, '' → undefined, blank → NaN, else Number.
 const rawToNullableNumber = (value: unknown): unknown => {
   if (value === null || value === undefined) {
     return value;
@@ -50,16 +55,70 @@ const rawToNullableNumber = (value: unknown): unknown => {
 };
 
 /**
- * 数値強制スキーマ。`inner` に `z.number().int()` 等を渡して制約を足せる（既定は z.number()）。
- * 例: zNum(z.number().int()) で整数必須。
+ * Build a required number schema that coerces string input to a number.
+ *
+ * @param inner - The inner number schema to apply after coercion; pass e.g. `z.number().int()` to add
+ * constraints. Defaults to `z.number()`.
+ * @returns A zod schema yielding a `number`.
+ *
+ * @example
+ * ```ts
+ * // Require an integer path param:
+ * const schema = z.object({ id: zNum(z.number().int()) });
+ * // '42' → 42, '' / '  ' → NaN (rejected)
+ * ```
  */
 export const zNum = (inner: z.ZodNumber = z.number()): z.ZodType<number> => z.preprocess(rawToNumber, inner);
 
+/**
+ * Build a number schema that coerces string input and substitutes a default for missing values.
+ *
+ * `undefined` or an empty string yields `defaultValue`; a whitespace-only string yields `NaN`
+ * (rejected by the inner schema); anything else is passed through `Number`.
+ *
+ * @param defaultValue - The value used when the input is `undefined` or an empty string.
+ * @param inner - The inner number schema applied after coercion. Defaults to `z.number()`.
+ * @returns A zod schema yielding a `number`.
+ *
+ * @example
+ * ```ts
+ * // Default page to 1 when the query param is absent:
+ * const schema = z.object({ page: zNumWithDefault(1) });
+ * ```
+ */
 export const zNumWithDefault = (defaultValue: number, inner: z.ZodNumber = z.number()): z.ZodType<number> =>
   z.preprocess(rawToNumberWithDefault(defaultValue), inner);
 
+/**
+ * Build an optional number schema that coerces string input.
+ *
+ * `undefined`, `null`, or an empty string yields `undefined`; a whitespace-only string yields `NaN`
+ * (rejected); anything else is passed through `Number`.
+ *
+ * @param inner - The inner number schema applied after coercion. Defaults to `z.number()`.
+ * @returns A zod schema yielding `number | undefined`.
+ *
+ * @example
+ * ```ts
+ * const schema = z.object({ limit: zNumOptional(z.number().int()) });
+ * ```
+ */
 export const zNumOptional = (inner: z.ZodNumber = z.number()): z.ZodType<number | undefined> =>
   z.preprocess(rawToOptionalNumber, inner.optional());
 
+/**
+ * Build a nullable, optional number schema that coerces string input.
+ *
+ * `null`/`undefined` pass through unchanged; an empty string yields `undefined`; a whitespace-only
+ * string yields `NaN` (rejected); anything else is passed through `Number`.
+ *
+ * @param inner - The inner number schema applied after coercion. Defaults to `z.number()`.
+ * @returns A zod schema yielding `number | null | undefined`.
+ *
+ * @example
+ * ```ts
+ * const schema = z.object({ parentId: zNumNullable(z.number().int()) });
+ * ```
+ */
 export const zNumNullable = (inner: z.ZodNumber = z.number()): z.ZodType<number | null | undefined> =>
   z.preprocess(rawToNullableNumber, inner.nullish());

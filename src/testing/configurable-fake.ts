@@ -1,15 +1,26 @@
 /**
- * 部分実装から test double を作る。設定済みメソッドはそのまま、未設定メソッドを呼ぶと
- * `${name}.${method} not configured` で明示的に失敗する。
+ * Build a test double from a partial implementation: configured members are returned as-is, while
+ * calling any unconfigured member fails explicitly with `` `${name}.${method} not configured` ``.
  *
- * 各 repo の Fake*Gateway に散っていた「`Partial<impl>` を受け取り、未設定なら throw する手書き
- * クラス」の定型を一本化する。interface がドメインごとに異なる gateway（Stripe 等）でも、これで
- * 1 行で必要メソッドだけ差した fake を作れる:
+ * @remarks
+ * Replaces the hand-written "accept a `Partial<impl>` and throw on anything unset" fake classes that
+ * tend to proliferate per gateway. Because gateway interfaces differ by domain (Stripe, etc.), this
+ * lets you stub only the members a given test exercises in a single line.
  *
- *   const stripe = configurableFake<StripeGateway>(
- *     { listPaymentIntents: async () => fakeApiList([fakePaymentIntent()]) },
- *     'FakeStripeGateway',
- *   );
+ * @typeParam T - The interface being faked.
+ * @param impl - Partial implementation; only the members the test needs.
+ * @param name - Label used in the "not configured" error message (defaults to `'fake'`).
+ * @returns A proxy typed as `T` that delegates to `impl` and throws on unconfigured members.
+ * @throws Error `` `${name}.${method} not configured` `` when an unconfigured string-keyed member is called.
+ * @example
+ * ```ts
+ * const stripe = configurableFake<StripeGateway>(
+ *   { listPaymentIntents: async () => fakeApiList([fakePaymentIntent()]) },
+ *   'FakeStripeGateway',
+ * );
+ * await stripe.listPaymentIntents(); // ok
+ * await stripe.cancelPaymentIntent('pi_1'); // throws: FakeStripeGateway.cancelPaymentIntent not configured
+ * ```
  */
 export function configurableFake<T extends object>(impl: Partial<T>, name = 'fake'): T {
   return new Proxy(impl, {
@@ -17,8 +28,9 @@ export function configurableFake<T extends object>(impl: Partial<T>, name = 'fak
       if (prop in target) {
         return (target as Record<string | symbol, unknown>)[prop];
       }
-      // Promise インターロップ用プロパティには「未設定メソッド」関数を返さない。返すと fake 自身が
-      // thenable 扱いされ、誤って await / Promise.resolve した瞬間に then() が呼ばれて throw する罠になる。
+      // Never return the "unconfigured member" function for Promise-interop properties. Doing so would
+      // make the fake itself look thenable, so accidentally awaiting it (or passing it to
+      // Promise.resolve) would invoke then() and throw — a subtle footgun.
       if (prop === 'then' || prop === 'catch' || prop === 'finally') {
         return undefined;
       }

@@ -1,28 +1,63 @@
 import { SignJWT, importPKCS8 } from 'jose';
 
 /**
- * Minimal Google Identity Toolkit client for the operations firebase-admin performed
- * that aren't token verification: accounts:lookup (getUser) and accounts:delete
- * (deleteUser). Replaces the firebase-admin Node SDK, which won't run on workerd.
+ * Minimal service-account credential consumed by {@link IdentityToolkit}.
  *
- * Auth: sign a JWT assertion with the service-account private key (jose), exchange it for
- * an OAuth2 access token, then call the REST API. Tokens are cached in-process.
+ * @remarks
+ * Corresponds to the relevant fields of a Google service-account JSON key file.
  */
 export interface ServiceAccount {
+  /** The service account's email, used as the JWT assertion issuer and subject. */
   client_email: string;
+  /** The PEM-encoded PKCS#8 RSA private key used to sign the OAuth2 assertion. */
   private_key: string;
+  /** The Google/Firebase project id the Identity Toolkit calls target. */
   project_id: string;
 }
 
+/** Google OAuth2 token endpoint used to exchange a signed JWT assertion for an access token. */
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
+/** Base URL of the Google Identity Toolkit v1 REST API. */
 const IDENTITY_TOOLKIT = 'https://identitytoolkit.googleapis.com/v1';
+/** OAuth2 scopes required for Identity Toolkit account lookup and deletion. */
 const SCOPE = 'https://www.googleapis.com/auth/identitytoolkit https://www.googleapis.com/auth/firebase';
 
+/**
+ * Minimal Google Identity Toolkit REST client for the user-management operations that token
+ * verification does not cover: `accounts:lookup` (getUser) and `accounts:delete` (deleteUser).
+ *
+ * This replaces the parts of the `firebase-admin` Node SDK that cannot run on Cloudflare
+ * Workers (workerd).
+ *
+ * @remarks
+ * Authentication follows the JWT-bearer flow: a JWT assertion is signed with the service
+ * account's private key (via `jose`), exchanged at the OAuth2 token endpoint for an access
+ * token, and that token is then used to call the REST API. Access tokens are cached in-process
+ * and reused until shortly before they expire.
+ */
 export class IdentityToolkit {
+  /** Cached OAuth2 access token and its absolute expiry (Unix seconds), or `null` when none. */
   private accessToken: { value: string; expiresAt: number } | null = null;
 
+  /**
+   * Create a client bound to a single service account.
+   *
+   * @param sa - The service-account credential used to authenticate REST calls.
+   */
   constructor(private readonly sa: ServiceAccount) {}
 
+  /**
+   * Return a valid OAuth2 access token, minting a new one when the cache is empty or expiring.
+   *
+   * Signs a short-lived JWT assertion with the service-account key and exchanges it at the
+   * Google OAuth2 token endpoint. The result is cached and reused while it remains valid
+   * (with a 60-second safety margin).
+   *
+   * @param nowSeconds - The current Unix time in seconds, used for cache validity and JWT timestamps.
+   * @returns A bearer access token for the Identity Toolkit API.
+   * @throws If the token exchange request fails.
+   * @internal
+   */
   private async getAccessToken(nowSeconds: number): Promise<string> {
     if (this.accessToken && this.accessToken.expiresAt > nowSeconds + 60) {
       return this.accessToken.value;
@@ -53,6 +88,15 @@ export class IdentityToolkit {
     return json.access_token;
   }
 
+  /**
+   * Look up a user record by uid via the `accounts:lookup` endpoint.
+   *
+   * @param uid - The user's unique id (`localId`).
+   * @param nowSeconds - The current Unix time in seconds, used for access-token caching.
+   * @returns The user's `uid` and optional `email`, or `null` when the request is unsuccessful
+   *   or no matching user is returned.
+   * @throws If acquiring an access token fails.
+   */
   async lookup(uid: string, nowSeconds: number): Promise<{ uid: string; email?: string } | null> {
     const token = await this.getAccessToken(nowSeconds);
     const res = await fetch(`${IDENTITY_TOOLKIT}/projects/${this.sa.project_id}/accounts:lookup`, {
@@ -68,6 +112,14 @@ export class IdentityToolkit {
     return user ? { uid: user.localId, email: user.email } : null;
   }
 
+  /**
+   * Delete a user by uid via the `accounts:delete` endpoint.
+   *
+   * @param uid - The user's unique id (`localId`).
+   * @param nowSeconds - The current Unix time in seconds, used for access-token caching.
+   * @returns A promise that resolves once the user has been deleted.
+   * @throws If acquiring an access token fails or the delete request is unsuccessful.
+   */
   async remove(uid: string, nowSeconds: number): Promise<void> {
     const token = await this.getAccessToken(nowSeconds);
     const res = await fetch(`${IDENTITY_TOOLKIT}/projects/${this.sa.project_id}/accounts:delete`, {

@@ -1,5 +1,14 @@
-// @rdlabo/workers-hono-kit/db — mysql2 依存のデータ層ヘルパ（ルート `.` は web 標準のみのため別サブパス）。
-// drizzle-orm の型同一性には依存しない（orm は消費側が渡す）。
+/**
+ * Data-layer helpers that depend on `mysql2` (exposed under the `/db` subpath because the package
+ * root is reserved for web-standard-only code).
+ *
+ * @remarks
+ * This module never depends on the type identity of `drizzle-orm`: the ORM instance is always
+ * supplied by the consumer. That keeps the kit safe to use even when the kit and the consuming app
+ * resolve separate copies of `drizzle-orm`.
+ *
+ * @packageDocumentation
+ */
 
 export { retryWhenDeadlock } from './retry.js';
 

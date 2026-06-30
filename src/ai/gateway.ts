@@ -1,61 +1,100 @@
 /**
- * Cloudflare AI Gateway のプロバイダ生成（`ai` SDK + `ai-gateway-provider`）。
- * フリート共通 = foodlabel / winecode / receptray hono の AI 呼び出しを必ず Gateway 経由にする。
+ * Cloudflare AI Gateway provider factory built on the Vercel AI SDK and `ai-gateway-provider`.
  *
- * `createAiGateway` が返す wrapper で `@ai-sdk/*` のモデルを包むと、SDK が組み立てた
- * プロバイダ宛リクエスト（api.openai.com / api.anthropic.com / *-aiplatform.googleapis.com 等）を
- * AI Gateway の Universal Endpoint 経由に差し替える。OpenAI / Anthropic / Google Vertex(SA) の
- * いずれも同じ `aigateway(model)` で透過的にルーティングされる（Vertex も対応）。
+ * Routes OpenAI, Anthropic, and Google Vertex `@ai-sdk/*` models through the AI Gateway Universal
+ * Endpoint. The wrapper returned by `createAiGateway` intercepts the provider-bound requests the SDK
+ * assembles (`api.openai.com`, `api.anthropic.com`, `*-aiplatform.googleapis.com`, etc.) and redirects
+ * them through the Gateway. Every provider is routed transparently via the same `aigateway(model)` call.
  *
- * ここはインフラ層（Gateway 識別子と認証トークンの注入だけ）。プロバイダの API キーや
- * Vertex の SA 認証情報は各 repo 側でモデル生成時に渡す（pass-through）。
+ * @remarks
+ * This module is purely the infrastructure layer: it injects only the Gateway identifier and (optionally)
+ * the Gateway authentication token. Provider API keys and Vertex service-account credentials are supplied
+ * by the caller at model-construction time and passed through untouched.
  */
 import { createAiGateway } from 'ai-gateway-provider';
 import type { AiGateway, AiGatewayBindingSettings, AiGatewayOptions } from 'ai-gateway-provider';
 
 export type { AiGateway, AiGatewayOptions } from 'ai-gateway-provider';
 
-/** Workers の AI binding（`env.AI.gateway(name)`）の最小形。Cloudflare の `AiGateway` が構造的に適合する。 */
+/**
+ * Minimal shape of a Workers AI binding (`env.AI.gateway(name)`).
+ *
+ * @remarks
+ * Cloudflare's runtime `AiGateway` type is structurally compatible with this binding shape.
+ */
 export type AiGatewayBinding = AiGatewayBindingSettings['binding'];
 
 /**
- * AI Gateway 設定。2 系統:
- *  - binding 形: Workers ランタイム（本番 / `wrangler dev`）。`env.AI.gateway(name)` を渡す。
- *    binding 経由は同一アカウント内で事前認証されるため Gateway トークン不要。
- *  - REST 形: Workers 外（Node の eval ハーネス等、binding 不可）。accountId + gateway + token で REST。
+ * Configuration for the AI Gateway provider. This is a union with two mutually exclusive forms.
+ *
+ * @remarks
+ * - **Binding form** — for the Workers runtime (production and `wrangler dev`). Pass the
+ *   `env.AI.gateway(name)` binding. Requests through a binding are pre-authenticated within the same
+ *   Cloudflare account, so no Gateway token is required.
+ * - **REST form** — for non-Workers contexts where a binding is unavailable (e.g. a Node evaluation
+ *   harness). Supply `accountId`, `gateway`, and (for authenticated Gateways) `token` to reach the
+ *   Gateway over REST.
  */
 export type AiGatewayConfig =
   | {
-      /** `env.AI.gateway(name)` 等の AI Gateway binding。 */
+      /** The AI Gateway binding, typically obtained via `env.AI.gateway(name)`. */
       binding: AiGatewayBinding;
-      /** キャッシュ / リトライ / メタデータ等の Gateway オプション（任意）。 */
+      /** Optional Gateway options such as caching, retries, and request metadata. */
       options?: AiGatewayOptions;
     }
   | {
-      /** Cloudflare アカウント ID。 */
+      /** Cloudflare account ID that owns the Gateway. */
       accountId: string;
-      /** AI Gateway 名。 */
+      /** AI Gateway name. */
       gateway: string;
       /**
-       * `cf-aig-authorization` に載せる Gateway 認証トークン。Authenticated Gateway のときだけ必要。
-       * unauthenticated Gateway では省略可（プロバイダの API キーではなく Gateway 自体への認証）。
+       * Gateway authentication token sent in the `cf-aig-authorization` header. Required only for an
+       * Authenticated Gateway; omit it for an unauthenticated Gateway. This authenticates the request to
+       * the Gateway itself and is distinct from any provider API key.
        */
       token?: string;
-      /** キャッシュ / リトライ / メタデータ等の Gateway オプション（任意）。 */
+      /** Optional Gateway options such as caching, retries, and request metadata. */
       options?: AiGatewayOptions;
     };
 
+/** Provider object exposing the AI Gateway model wrapper. */
 export interface AiGatewayProvider {
   /**
-   * `@ai-sdk/*` のモデルを包んで AI Gateway 経由にする。
-   * 例: `aigateway(createAnthropic({ apiKey }).('claude-...'))`。
-   * 配列を渡すとフォールバック（先頭から順に試行）になる。
+   * Wraps an `@ai-sdk/*` model so its requests are routed through the AI Gateway.
+   *
+   * @remarks
+   * Example invocation: `aigateway(createAnthropic({ apiKey })('claude-...'))`. Passing an array of
+   * models enables fallback behavior — each model is attempted in order from the start of the array.
    */
   aigateway: AiGateway;
 }
 
 /**
- * AI Gateway 用のプロバイダを生成する。binding 形 / REST 形のどちらでも可（欠落時は fail-fast）。
+ * Create an AI Gateway provider from either the binding form or the REST form of the configuration.
+ *
+ * @param config - The Gateway configuration; either the binding form or the REST form.
+ * @returns A provider whose `aigateway` wrapper routes models through the AI Gateway.
+ * @throws Error When the REST form is used and `accountId` or `gateway` is missing (fail-fast).
+ * @example
+ * ```ts
+ * // Binding form (Workers runtime: production / wrangler dev)
+ * import { createAnthropic } from '@ai-sdk/anthropic';
+ *
+ * const { aigateway } = createAiGatewayProvider({ binding: env.AI.gateway('my-gateway') });
+ * const model = aigateway(createAnthropic({ apiKey: env.ANTHROPIC_API_KEY })('claude-3-5-sonnet-latest'));
+ * ```
+ * @example
+ * ```ts
+ * // REST form (non-Workers context, e.g. a Node evaluation harness)
+ * import { createOpenAI } from '@ai-sdk/openai';
+ *
+ * const { aigateway } = createAiGatewayProvider({
+ *   accountId: process.env.CF_ACCOUNT_ID!,
+ *   gateway: 'my-gateway',
+ *   token: process.env.CF_AIG_TOKEN, // only for an Authenticated Gateway
+ * });
+ * const model = aigateway(createOpenAI({ apiKey: process.env.OPENAI_API_KEY })('gpt-4o'));
+ * ```
  */
 export function createAiGatewayProvider(config: AiGatewayConfig): AiGatewayProvider {
   if ('binding' in config) {
@@ -63,13 +102,13 @@ export function createAiGatewayProvider(config: AiGatewayConfig): AiGatewayProvi
   }
 
   if (!config.accountId) {
-    throw new Error('AI Gateway: accountId が未設定です');
+    throw new Error('AI Gateway: accountId is not set');
   }
   if (!config.gateway) {
-    throw new Error('AI Gateway: gateway 名が未設定です');
+    throw new Error('AI Gateway: gateway name is not set');
   }
 
-  // token は Authenticated Gateway のときだけ apiKey として送る。unauthenticated では undefined で可。
+  // The token is sent as apiKey only for an Authenticated Gateway; undefined is fine when unauthenticated.
   return {
     aigateway: createAiGateway({
       accountId: config.accountId,

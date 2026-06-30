@@ -4,40 +4,87 @@ import { createConnection, createPool } from 'mysql2/promise';
 import type { Pool } from 'mysql2/promise';
 
 /**
- * フリート共通のテスト DB ヘルパ（各 repo の testing/db.ts を集約）。
- * テストスキーマは「コミット済み Drizzle マイグレーション」を単一ソースとして構築する
- * （手書き schema.sql ではなく `db:generate` 由来の ./drizzle）。
+ * Connection parameters for the test MySQL server.
  *
- * Node 専用（vitest 下で実行）。実行時 parity には無関係なテスト基盤。
+ * @see {@link CreateTestDbOptions.connection} for how defaults are resolved.
  */
 export interface TestDbConnection {
+  /** Server host. */
   host: string;
+  /** Server port. */
   port: number;
+  /** User name. */
   user: string;
+  /** Password. */
   password: string;
 }
 
+/**
+ * Options for {@link createTestDb}.
+ */
 export interface CreateTestDbOptions {
-  /** テスト DB 名（例 'tipsys_test'）。並列実行で feature 毎に分けたい場合は呼び出し側で TEST_DB を解決して渡す。 */
+  /**
+   * Test database name (e.g. `'app_test'`). To isolate parallel runs per feature, resolve a per-run
+   * name on the caller side and pass it here.
+   */
   dbName: string;
-  /** Drizzle マイグレーションフォルダの絶対パス（呼び出し側で `join(here, '..', 'drizzle')` を解決して渡す）。 */
+  /**
+   * Absolute path to the Drizzle migrations folder. Resolve it on the caller side, e.g.
+   * `join(here, '..', 'drizzle')`.
+   */
   migrationsFolder: string;
-  /** 接続情報。未指定は env（DB_HOST/DB_PORT/DB_USER/DB_PASSWORD）→ 127.0.0.1/3306/root/root。 */
+  /**
+   * Connection overrides. Unspecified fields fall back to environment variables
+   * (`DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`), then to `127.0.0.1`/`3306`/`root`/`root`.
+   */
   connection?: Partial<TestDbConnection>;
 }
 
+/**
+ * Test database handle returned by {@link createTestDb}, bundling schema setup, pooling, and
+ * fixture helpers for a single test database.
+ */
 export interface TestDb {
+  /** The resolved test database name. */
   readonly dbName: string;
+  /** The resolved connection parameters. */
   readonly connection: TestDbConnection;
-  /** DROP/CREATE して Drizzle マイグレーションを適用しスキーマを構築。 */
+  /**
+   * Drop and recreate the database, then apply the committed Drizzle migrations to build the schema.
+   *
+   * @returns A promise that resolves once migrations have been applied.
+   */
   resetSchema(): Promise<void>;
-  /** テスト DB に繋いだ mysql2 プールを返す（afterAll で pool.end()）。 */
+  /**
+   * Create a mysql2 pool connected to the test database.
+   *
+   * @remarks Call `pool.end()` (e.g. in `afterAll`) to release connections.
+   * @returns A connection pool for the test database.
+   */
   createTestPool(): Pool;
-  /** 全テーブルを TRUNCATE（information_schema から動的取得。__drizzle_migrations は除外）。 */
+  /**
+   * Truncate every base table in the database.
+   *
+   * @remarks Table names are discovered dynamically from `information_schema`; the
+   * `__drizzle_migrations` bookkeeping table is excluded. Foreign-key checks are disabled for the
+   * duration so truncation order does not matter.
+   * @param pool - Pool connected to the test database.
+   */
   truncateAll(pool: Pool): Promise<void>;
-  /** 1 行 insert する汎用 seed（列名→値）。route spec の fixture 用。 */
+  /**
+   * Insert a single row, mapping column names to values — a generic fixture helper for specs.
+   *
+   * @param pool - Pool connected to the test database.
+   * @param table - Target table name.
+   * @param row - Column-name to value map. A no-op if empty.
+   */
   seed(pool: Pool, table: string, row: Record<string, unknown>): Promise<void>;
-  /** ローカル MySQL が到達可能か（`describe.skipIf(!(await mysqlReachable()))` のガード用）。 */
+  /**
+   * Report whether the local MySQL server is reachable.
+   *
+   * @remarks Useful as a guard, e.g. `describe.skipIf(!(await mysqlReachable()))`.
+   * @returns `true` if a connection could be opened, otherwise `false`.
+   */
   mysqlReachable(): Promise<boolean>;
 }
 
@@ -51,6 +98,28 @@ function resolveConnection(override?: Partial<TestDbConnection>): TestDbConnecti
   };
 }
 
+/**
+ * Create a {@link TestDb} handle for a single test database.
+ *
+ * @remarks
+ * The test schema is built from the committed Drizzle migrations as the single source of truth
+ * (the `db:generate` output under `./drizzle`), rather than a hand-written `schema.sql`. This helper
+ * is Node-only test infrastructure (run under Vitest) and is unrelated to runtime behavior.
+ *
+ * @param options - Database name, migrations folder, and optional connection overrides. See
+ *   {@link CreateTestDbOptions}.
+ * @returns A handle exposing schema setup, pooling, truncation, seeding, and a reachability probe.
+ * @example
+ * ```ts
+ * const testDb = createTestDb({ dbName: 'app_test', migrationsFolder: join(here, '..', 'drizzle') });
+ * beforeAll(async () => {
+ *   await testDb.resetSchema();
+ * });
+ * const pool = testDb.createTestPool();
+ * beforeEach(() => testDb.truncateAll(pool));
+ * afterAll(() => pool.end());
+ * ```
+ */
 export function createTestDb(options: CreateTestDbOptions): TestDb {
   const { dbName, migrationsFolder } = options;
   const connection = resolveConnection(options.connection);
@@ -80,7 +149,7 @@ export function createTestDb(options: CreateTestDbOptions): TestDb {
         timezone: '+09:00',
       });
       // Pin ONLY_FULL_GROUP_BY on every pooled connection so GROUP BY violations surface in specs
-      // regardless of the server's my.cnf (fleet policy centralized here, not per-repo). CONCAT keeps
+      // regardless of the server's my.cnf (the policy is centralized here, not left to each server). CONCAT keeps
       // the server's other sql_mode flags and is harmless if ONLY_FULL_GROUP_BY is already present.
       // mysql2 queues this SET ahead of the consumer's first query on each new physical connection.
       pool.on('connection', (conn) => {

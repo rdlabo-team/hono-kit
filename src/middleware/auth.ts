@@ -4,34 +4,95 @@ import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { getAppInfo } from '../http/app-info.js';
 import type { AppInfo } from '../http/app-info.js';
 
+/**
+ * Configuration for {@link createAuthMiddleware}.
+ *
+ * @typeParam E - The Hono `Env` (bindings/variables) of the application.
+ * @typeParam Verified - The value produced by {@link AuthMiddlewareOptions.verify} (e.g. a decoded token or user record).
+ * @typeParam Id - The resolved user identifier type.
+ */
 export interface AuthMiddlewareOptions<E extends Env, Verified, Id = unknown> {
-  /** ID トークンを載せるヘッダ。既定 `'x-amz-security-token'`（フリート共通）。 */
+  /** Header carrying the ID token. Defaults to `'x-amz-security-token'`. */
   tokenHeader?: string;
-  /** 生トークンを検証して record/decoded を返す。無効なら throw / reject すること。 */
+  /**
+   * Verify the raw token and return the decoded value or user record.
+   *
+   * @param token - The raw token read from {@link AuthMiddlewareOptions.tokenHeader} (empty string if absent).
+   * @param c - The current Hono context.
+   * @returns The verified value passed to {@link AuthMiddlewareOptions.resolveUserId}/{@link AuthMiddlewareOptions.setContext}.
+   * @throws If the token is invalid; rejecting/throwing triggers the failure path.
+   */
   verify: (token: string, c: Context<E>) => Promise<Verified>;
   /**
-   * DB userId を解決（必要なら新規作成）する。**省略すると token-only**（検証のみ・login 用）になる。
-   * create-on-miss（`getUserIdFromFirebase(...).catch(() => createUser(...))`）は repo 側でここに合成する。
+   * Resolve the database user id (creating the user if necessary).
+   *
+   * @remarks
+   * Omit this to run in **token-only** mode (verification only, e.g. for login). Create-on-miss
+   * behavior (such as `getUserId(...).catch(() => createUser(...))`) should be composed here by the
+   * caller.
+   *
+   * @param verified - The value returned by {@link AuthMiddlewareOptions.verify}.
+   * @param c - The current Hono context.
+   * @param appInfo - The resolved application info for the request.
+   * @returns The resolved user id.
    */
   resolveUserId?: (verified: Verified, c: Context<E>, appInfo: AppInfo) => Promise<Id>;
-  /** 検証結果を c.var に載せる。repo 固有の var 名（`decodedToken` / `userRecord` / `userProtocol` 等）を注入する。 */
+  /**
+   * Store the verification result on the context variables.
+   *
+   * @remarks
+   * Inject the application-specific variable names here (e.g. `decodedToken`, `userRecord`, `userProtocol`).
+   *
+   * @param c - The current Hono context.
+   * @param data - The verified value, resolved app info, and (when available) the user id.
+   */
   setContext: (c: Context<E>, data: { verified: Verified; appInfo: AppInfo; userId?: Id }) => void;
   /**
-   * 失敗時の挙動。既定は `throw new HTTPException(failureStatus, { message: failureMessage })`
-   * （foodlabel/receptray と同形）。**winecode は `c.json(BODY, n)` を返す**ため上書きする。
+   * Override the failure behavior.
+   *
+   * @remarks
+   * Defaults to `throw new HTTPException(failureStatus, { message: failureMessage })`. Provide this to
+   * return a custom `Response` instead (e.g. `c.json(body, status)`).
+   *
+   * @param err - The error thrown during verification/resolution.
+   * @param c - The current Hono context.
+   * @returns The failure response to send.
    */
   onFailure?: (err: unknown, c: Context<E>) => Response;
-  /** 既定 onFailure の status。既定 `403`（token-only の 401 等は repo が上書き）。 */
+  /** Status used by the default `onFailure`. Defaults to `403`. */
   failureStatus?: ContentfulStatusCode;
-  /** 既定 onFailure の message。既定 `'Forbidden resource'`。 */
+  /** Message used by the default `onFailure`. Defaults to `'Forbidden resource'`. */
   failureMessage?: string;
 }
 
 /**
- * NestJS の AuthGuard / TokenGuard 相当の認証 middleware を作る（フリート共通）。
- * スケルトン（ヘッダ読取 → verify → getAppInfo → resolveUserId → setContext、失敗で console.error +
- * onFailure）を共有し、repo 固有部分（verify / userId 解決 / var 名 / 失敗レスポンス）だけ注入させる。
- * `resolveUserId` を省けば token-only middleware になる。
+ * Create an authentication middleware equivalent to a NestJS `AuthGuard` / `TokenGuard`.
+ *
+ * The middleware runs a fixed skeleton — read the token header, `verify`, `getAppInfo`,
+ * `resolveUserId`, `setContext`, and on error `console.error` then `onFailure` — while the
+ * application injects the variable parts (token verification, user-id resolution, context variable
+ * names, and the failure response). Omitting {@link AuthMiddlewareOptions.resolveUserId} yields a
+ * token-only middleware.
+ *
+ * @typeParam E - The Hono `Env` of the application.
+ * @typeParam Verified - The value produced by `verify`.
+ * @typeParam Id - The resolved user identifier type.
+ * @param options - The verification, resolution, and failure hooks; see {@link AuthMiddlewareOptions}.
+ * @returns A {@link MiddlewareHandler} that authenticates the request and populates the context.
+ * @throws HTTPException From the default failure handler when `onFailure` is not supplied.
+ *
+ * @example
+ * ```ts
+ * const auth = createAuthMiddleware({
+ *   verify: (token, c) => verifier.verifyIdToken(token),
+ *   resolveUserId: (decoded) => findUserId(decoded.uid),
+ *   setContext: (c, { verified, userId }) => {
+ *     c.set('decodedToken', verified);
+ *     c.set('userId', userId);
+ *   },
+ * });
+ * app.use('/api/*', auth);
+ * ```
  */
 export function createAuthMiddleware<E extends Env = Env, Verified = unknown, Id = unknown>(
   options: AuthMiddlewareOptions<E, Verified, Id>,
@@ -54,8 +115,9 @@ export function createAuthMiddleware<E extends Env = Env, Verified = unknown, Id
       const userId = resolveUserId ? await resolveUserId(verified, c, appInfo) : undefined;
       setContext(c, { verified, appInfo, userId });
     } catch (e) {
-      // Nest guard が false → ForbiddenException('Forbidden resource')。原因をログし、既定では throw して
-      // app.onError に Nest 形 body を描かせる（repo は onFailure で return 形に上書き可能）。
+      // Equivalent to a guard returning false → ForbiddenException('Forbidden resource'). Log the
+      // cause and, by default, throw so the app's onError renders the error body (callers can
+      // override with onFailure to return a custom response instead).
       console.error(e);
       if (onFailure) {
         return onFailure(e, c);

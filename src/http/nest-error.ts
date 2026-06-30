@@ -2,8 +2,11 @@ import type { Context, Env } from 'hono';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';
 
 /**
- * NestJS の既定例外フィルタが付ける reason phrase（フリート共通 = receptray/winecode/foodlabel の
- * REASON_PHRASE / DEFAULT_MESSAGES と同一）。3 repo がそれぞれ手書きしていたものを一本化する。
+ * Reason phrases attached by the NestJS default exception filter, keyed by HTTP status code.
+ *
+ * @remarks
+ * Mirrors the `error` field values NestJS produces for common client-error statuses, so a Hono app can
+ * return byte-identical error bodies. Used as the default `reasonPhrases` map by {@link createNestErrorHandler}.
  */
 export const NEST_REASON_PHRASES: Record<number, string> = {
   400: 'Bad Request',
@@ -12,64 +15,100 @@ export const NEST_REASON_PHRASES: Record<number, string> = {
   404: 'Not Found',
 };
 
-/** 想定外エラーの通報先に渡す文脈（request id 相関など）。フリート共通の最小形。 */
+/**
+ * Contextual metadata passed to an {@link ErrorReporter} when reporting an unexpected error.
+ */
 export interface ErrorReportContext {
+  /** Correlation id for the failing request, if one is tracked. */
   requestId?: string;
 }
 
 /**
- * 想定外エラーの通報関数（Sentry 等）の型。各 repo の container.reportError がこの形。
- * `createNestErrorHandler({ onUnhandledError })` に `(err, c) => reporter(err, { requestId: c.get('requestId') })`
- * の形で差し込む。Sentry 呼び出し自体は各 repo（@sentry/cloudflare は workers-hono-kit に持ち込まない）。
+ * Signature of a function that reports an unexpected (non-HTTP) error to an external sink such as Sentry.
+ *
+ * @remarks
+ * Wire it into {@link createNestErrorHandler} via `onUnhandledError`, e.g.
+ * `(err, c) => reporter(err, { requestId: c.get('requestId') })`. The reporting client itself is
+ * intentionally kept out of this kit; the consumer supplies the implementation.
+ *
+ * @param error - The thrown value being reported.
+ * @param context - Optional correlation context for the failing request.
  */
 export type ErrorReporter = (error: unknown, context?: ErrorReportContext) => void;
 
-/** http エラーとみなされた値から status / message / body を読むための最小形。 */
+/**
+ * Minimal shape read from a value treated as an HTTP error: its status, message, and optional body.
+ *
+ * @internal
+ */
 interface HttpErrorLike {
+  /** HTTP status code to respond with. */
   status: ContentfulStatusCode;
+  /** Human-readable error message placed in the response body. */
   message: string;
-  /** repo 固有 body の脱出口（winecode の HttpError.body 相当）。あればそのまま render する。 */
+  /**
+   * Escape hatch for a fully custom response body. When present, it is rendered verbatim instead of
+   * the NestJS-shaped body.
+   */
   body?: unknown;
 }
 
+/**
+ * Options controlling how {@link createNestErrorHandler} shapes error responses.
+ *
+ * @typeParam E - The Hono environment type, so `onUnhandledError` receives a correctly typed context.
+ */
 export interface NestErrorHandlerOptions<E extends Env = Env> {
-  /** reason phrase map。既定 `NEST_REASON_PHRASES`。 */
+  /** Status-to-reason-phrase map for the `error` field. Defaults to {@link NEST_REASON_PHRASES}. */
   reasonPhrases?: Record<number, string>;
   /**
-   * `error` フィールドを省いて `{ statusCode, message }` のみ返す status。既定 `[401]`
-   * （NestJS の generic `HttpException(msg, 401)` は `error` を持たない）。
+   * Statuses that return only `{ statusCode, message }`, omitting the `error` field. Defaults to `[401]`,
+   * matching NestJS where a generic `HttpException(msg, 401)` carries no `error`.
    */
   bareStatuses?: readonly number[];
   /**
-   * 非 bare body のフィールド順序。既定 `'statusCode-first'`（= NestJS canonical / receptray・winecode）。
-   * **foodlabel は `'message-first'`** を指定して `{ message, error, statusCode }` の byte-parity を保つ。
+   * Field order of the non-bare error body. Defaults to `'statusCode-first'` (the NestJS canonical order).
+   * Use `'message-first'` to emit `{ message, error, statusCode }` when byte parity requires it.
    */
   fieldOrder?: 'statusCode-first' | 'message-first';
   /**
-   * reasonPhrases に無い（かつ bare でない）status の `error` フォールバック。既定 `undefined`
-   * （= reason 無しなら `error` を省く）。**winecode は `'Error'`** を指定し、全 status で `error` を必ず出す
-   * （NestJS 既定例外フィルタの「error は常に存在」を忠実再現）。
+   * Fallback `error` value for statuses that are neither bare nor present in `reasonPhrases`. Defaults to
+   * `undefined`, meaning the `error` field is omitted when no reason phrase is known. Set to a string such
+   * as `'Error'` to always include an `error` field, faithfully reproducing the NestJS default exception
+   * filter behavior where `error` is always present.
    */
   fallbackReason?: string;
   /**
-   * http エラー判定。既定は hono の `HTTPException`。
-   * **winecode は独自 `HttpError` を使う**ため `(e) => e instanceof HttpError` を渡す。
+   * Predicate identifying which thrown values are HTTP errors. Defaults to detecting Hono's `HTTPException`.
+   * Override it (e.g. `(e) => e instanceof MyHttpError`) when the app throws a custom HTTP error type.
    */
   isHttpError?: (err: unknown) => err is HttpErrorLike;
   /**
-   * http エラーでない（= 想定外）エラーを 500 で返す前に呼ぶフック（Sentry 通報など）。
-   * **receptray は `container.reportError?.(err, { requestId })`** を差し込む。例外は握り潰す。
+   * Hook invoked before an unexpected (non-HTTP) error is returned as a 500, typically used to report the
+   * error (e.g. to Sentry). Any exception thrown by this hook is swallowed so reporting cannot alter the
+   * error response.
    */
   onUnhandledError?: (err: unknown, c: Context<E>) => void;
-  /** 想定外エラー時の 500 body。既定 `{ statusCode: 500, message: 'Internal server error' }`。 */
+  /**
+   * Response body for unexpected errors returned as 500. Defaults to
+   * `{ statusCode: 500, message: 'Internal server error' }`.
+   */
   internalServerErrorBody?: unknown;
 }
 
 /**
- * hono の `HTTPException` を **構造的に**判定する（`instanceof` ではない）。workers-hono-kit は consumer に
- * symlink 同梱されるため、workers-hono-kit が解決する `hono` と consumer の `hono` が別インスタンスになり得る
- * （別コピーの HTTPException は `instanceof` で一致しない）。`getResponse()` と数値 `status` を持つかで
- * 判定すればモジュール境界をまたいでも、prod バンドルでも安定する。
+ * Structurally detect Hono's `HTTPException` without relying on `instanceof`.
+ *
+ * @remarks
+ * When this kit is symlinked into a consumer, the `hono` instance it resolves can differ from the
+ * consumer's `hono`, so an `HTTPException` from one copy fails an `instanceof` check against the other.
+ * Detecting the presence of a `getResponse()` method and a numeric `status` is stable across module
+ * boundaries and production bundles.
+ *
+ * @param err - The thrown value to test.
+ * @returns `true` when `err` looks like a Hono `HTTPException`.
+ *
+ * @internal
  */
 const isHTTPException = (err: unknown): err is HttpErrorLike =>
   err instanceof Error &&
@@ -77,13 +116,32 @@ const isHTTPException = (err: unknown): err is HttpErrorLike =>
   typeof (err as { status?: unknown }).status === 'number';
 
 /**
- * NestJS の例外フィルタ相当の Hono `onError` ハンドラを作る（フリート共通）。
- * - http エラー（既定 `HTTPException`）→ Nest 形 body にマップ。`body` を持つ場合はそれを verbatim で返す。
- * - bareStatuses（既定 401）は `error` フィールド無し。
- * - それ以外（想定外エラー）→ `onUnhandledError` 通報 + `console.error` + 500。
+ * Create a Hono `onError` handler that maps thrown errors to NestJS-shaped error JSON.
  *
- * `app.onError(createNestErrorHandler(...))` の形で使う。各 repo の parity 差異（body 順序・
- * エラー型・通報フック）は options で吸収し、本体の分岐ロジックは共有する。
+ * @remarks
+ * Reproduces the NestJS default exception filter so a Hono app returns byte-identical error bodies:
+ * - HTTP errors (by default `HTTPException`) are mapped to a NestJS-shaped body; if the error carries a
+ *   custom `body`, that body is returned verbatim.
+ * - Statuses listed in `bareStatuses` (default `[401]`) omit the `error` field.
+ * - Any other (unexpected) error triggers `onUnhandledError`, is logged via `console.error`, and returns 500.
+ *
+ * Per-app differences in body field order, HTTP error type, and reporting hook are absorbed through
+ * {@link NestErrorHandlerOptions}, while the branching logic stays shared.
+ *
+ * @typeParam E - The Hono environment type propagated to `onUnhandledError`.
+ * @param options - Overrides for reason phrases, bare statuses, field order, error detection, and reporting.
+ * @returns A handler suitable for `app.onError(...)`.
+ *
+ * @example
+ * ```ts
+ * app.onError(
+ *   createNestErrorHandler({
+ *     fieldOrder: 'message-first',
+ *     fallbackReason: 'Error',
+ *     onUnhandledError: (err, c) => reportError(err, { requestId: c.get('requestId') }),
+ *   }),
+ * );
+ * ```
  */
 export function createNestErrorHandler<E extends Env = Env>(options: NestErrorHandlerOptions<E> = {}) {
   const {
@@ -98,12 +156,12 @@ export function createNestErrorHandler<E extends Env = Env>(options: NestErrorHa
 
   return (err: Error, c: Context<E>): Response => {
     if (isHttpError(err)) {
-      // repo 固有 body の脱出口（winecode）。
+      // Escape hatch for a custom error body: render it verbatim.
       if (err.body !== undefined) {
         return c.json(err.body as object, err.status);
       }
-      // reasonPhrases[status] は型上 string だが noUncheckedIndexedAccess 無効のため実際は未定義になり得る。
-      // 未登録 status の fallbackReason フォールバックは意図的。
+      // reasonPhrases[status] is typed as string, but with noUncheckedIndexedAccess disabled it can be
+      // undefined at runtime. The fallbackReason fallback for unregistered statuses is intentional.
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition
       const reason = bareStatuses.includes(err.status) ? undefined : (reasonPhrases[err.status] ?? fallbackReason);
       if (reason === undefined) {
@@ -119,7 +177,7 @@ export function createNestErrorHandler<E extends Env = Env>(options: NestErrorHa
     try {
       onUnhandledError?.(err, c);
     } catch {
-      // 通報はエラーレスポンスの挙動を変えてはならない。
+      // Reporting must never change the behavior of the error response.
     }
     console.error(err);
     return c.json(internalServerErrorBody as object, 500);
@@ -127,8 +185,19 @@ export function createNestErrorHandler<E extends Env = Env>(options: NestErrorHa
 }
 
 /**
- * Express/Nest 既定の未マッチルート 404 body を返す `notFound` ハンドラ。
- * `app.notFound(nestNotFoundHandler)` で使う（receptray/winecode は未実装の parity ギャップ）。
+ * Hono `notFound` handler that returns the canonical Express/NestJS unmatched-route 404 body.
+ *
+ * @remarks
+ * Produces `{ message: "Cannot <METHOD> <path>", error: 'Not Found', statusCode: 404 }`, matching the
+ * NestJS default 404 response so unmatched routes stay byte-identical.
+ *
+ * @param c - The Hono request context for the unmatched route.
+ * @returns A 404 JSON response.
+ *
+ * @example
+ * ```ts
+ * app.notFound(nestNotFoundHandler);
+ * ```
  */
 export function nestNotFoundHandler(c: Context): Response {
   return c.json(

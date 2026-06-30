@@ -1,45 +1,87 @@
 /**
- * Drizzle の列名 casing をフリートで一元管理する（標準: snake_case を「config」と「runtime」の両方で固定）。
+ * Centralizes Drizzle column-name casing so it is fixed (standard: `snake_case`) in both the
+ * config and the runtime ORM.
  *
- * casing は2か所にあり別物:
- *   ① drizzle.config.ts の top-level `casing` … `db:generate` が **作る列名** を決める（→ honoDrizzleConfig）
- *   ② database.ts の `drizzle(conn, { …casing })` … **実行時の書き込みビルダが参照する列名** を決める（→ DRIZZLE_ORM_OPTIONS）
+ * @remarks
+ * Casing is configured in two distinct places:
  *
- * この2つが食い違うと、明示列名を書き忘れた camelCase 複数単語列で generate と実行時がズレて実行時
- * `Unknown column` になる（typecheck もマイグレーションも正常に見えるので発覚が遅い）。両方ここから取れば
- * ズレが構造的に起きない。明示列名がある列では casing は無視されるので、既存挙動は変えない純粋な安全網。
+ * 1. The top-level `casing` in `drizzle.config.ts` decides the column names that `db:generate`
+ *    **creates** (see {@link honoDrizzleConfig}).
+ * 2. The `drizzle(conn, { …casing })` call decides the column names the **runtime write builder**
+ *    resolves to (see {@link DRIZZLE_ORM_OPTIONS}).
  *
- * 注: runtime の `drizzle()` 呼び出し自体は **消費側 repo が自分の drizzle-orm で行う**（kit が drizzle() を
- * 呼ぶと kit と repo で drizzle-orm が別コピーになり型同一性が壊れるため）。kit は「値」だけを提供する。
+ * If these two disagree, a multi-word camelCase column without an explicit column name will be
+ * generated with one name but queried with another, producing a runtime `Unknown column` error —
+ * something neither the type-check nor the migration surface, so it is caught late. Sourcing both
+ * from here makes the mismatch structurally impossible. Casing is ignored for columns that declare
+ * an explicit name, so this is a pure safety net that does not change existing behavior.
+ *
+ * The runtime `drizzle()` call itself is made by the consuming app with its own `drizzle-orm`; the
+ * kit only ever provides values, never the ORM instance, to avoid splitting `drizzle-orm` into two
+ * copies and breaking type identity.
  */
 
 /**
- * runtime 用。消費側 repo の database.ts で `drizzle(conn, { schema, ...DRIZZLE_ORM_OPTIONS })` と spread して使う。
- * mode/casing を kit が固定し、書き込みビルダの列名解決を snake_case に揃える。
+ * Runtime ORM options shared by the consuming app's `drizzle()` call.
+ *
+ * Spread into the runtime ORM as `drizzle(conn, { schema, ...DRIZZLE_ORM_OPTIONS })` so the write
+ * builder resolves column names as `snake_case`, matching what `db:generate` creates.
+ *
+ * @remarks
+ * Fixes `mode: 'default'` and `casing: 'snake_case'`. See the module-level documentation for why
+ * the same casing must be used by both the config and the runtime ORM.
  */
 export const DRIZZLE_ORM_OPTIONS = { mode: 'default', casing: 'snake_case' } as const;
 
+/**
+ * Options for {@link honoDrizzleConfig}.
+ */
 export interface HonoDrizzleConfigOptions {
-  /** drizzle-kit の dbCredentials.database（localConnectionString とは別）。 */
+  /** drizzle-kit `dbCredentials.database` — the database name to connect to. */
   database: string;
+  /** Database host; defaults to `process.env.DB_HOST` then `127.0.0.1`. */
   host?: string;
+  /** Database port; defaults to `process.env.DB_PORT` then `3306`. */
   port?: number;
+  /** Database user; defaults to `process.env.DB_USER` then `root`. */
   user?: string;
+  /** Database password; defaults to `process.env.DB_PASSWORD` then `root`. */
   password?: string;
-  /** 既定 './src/db/schemes'。 */
+  /** Path to the schema directory; defaults to `'./src/db/schemes'`. */
   schema?: string;
-  /** 既定 './drizzle'。 */
+  /** Output directory for generated migrations; defaults to `'./drizzle'`. */
   out?: string;
-  /** /api と DB を共有する repo は schema 由来テーブルに限定する（省略可）。 */
+  /**
+   * Optional table allow-list. Use this to restrict drizzle-kit to the schema's own tables when the
+   * database is shared with another application.
+   */
   tablesFilter?: string[];
-  /** db:introspect（DB→JS）の casing。生成方向の `casing:'snake_case'` とは別軸（省略可）。 */
+  /**
+   * Optional `db:introspect` (DB → JS) casing. This is an independent axis from the generation-side
+   * `casing: 'snake_case'` and only affects introspection output.
+   */
   introspect?: { casing: 'camel' | 'preserve' };
 }
 
 /**
- * drizzle.config.ts 用ファクトリ。`export default honoDrizzleConfig({ database })` で使う。
- * casing:'snake_case'・schema/out・dbCredentials（env 既定）を kit が owner として固定する。
- * drizzle-kit を kit の依存にしないため plain object を返す（drizzle-kit CLI は default export を読むだけ）。
+ * Build a `drizzle.config.ts` configuration object with the kit's standard defaults.
+ *
+ * Fixes `casing: 'snake_case'`, the `schema`/`out` paths, and `dbCredentials` (with env-based
+ * defaults), while leaving `tablesFilter` and `introspect` opt-in.
+ *
+ * @remarks
+ * Returns a plain object rather than a typed drizzle-kit config so that `drizzle-kit` need not be a
+ * dependency of the kit; the drizzle-kit CLI only reads the default export.
+ *
+ * @param options - configuration overrides; only `database` is required.
+ * @returns a plain configuration object suitable for `export default` in `drizzle.config.ts`.
+ * @example
+ * ```ts
+ * // drizzle.config.ts
+ * import { honoDrizzleConfig } from '@rdlabo/workers-hono-kit/db';
+ *
+ * export default honoDrizzleConfig({ database: 'app' });
+ * ```
  */
 export function honoDrizzleConfig(options: HonoDrizzleConfigOptions) {
   const {
