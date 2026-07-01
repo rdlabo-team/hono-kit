@@ -40,7 +40,8 @@
     "!src/**/*.spec.ts"
   ],
   "bin": {
-    "workers-hono-kit-sync-dev-aws": "./scripts/sync-dev-aws.mjs"
+    "workers-hono-kit-sync-dev-aws": "./scripts/sync-dev-aws.mjs",
+    "workers-hono-kit-check-subrequest-fanout": "./scripts/check-subrequest-fanout.mjs"
   },
   "exports": {
     ".": {
