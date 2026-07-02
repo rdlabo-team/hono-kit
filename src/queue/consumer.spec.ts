@@ -77,6 +77,24 @@ describe('processBatch', () => {
     expect(message.retry).toHaveBeenCalledWith(undefined);
   });
 
+  it('onError が例外を投げても retry と残メッセージ処理が継続する', async () => {
+    const messages = [createMessage('a', 1), createMessage('b', 2), createMessage('c', 3)];
+    const handler = vi.fn(async (body: number) => {
+      if (body === 1) {
+        throw new Error('handler fail');
+      }
+    });
+    const throwingOnError = vi.fn(() => {
+      throw new Error('onError blew up');
+    });
+    const result = await processBatch(createBatch(messages), handler, { onError: throwingOnError });
+
+    expect(result).toEqual({ processed: 2, failed: 1 });
+    expect(messages[0].retry).toHaveBeenCalledOnce();
+    expect(messages[1].ack).toHaveBeenCalledOnce();
+    expect(messages[2].ack).toHaveBeenCalledOnce();
+  });
+
   it('1 invocation の外部呼び出し数はバッチ長で bound される', async () => {
     const messages = Array.from({ length: 10 }, (_, i) => createMessage(String(i), i));
     let externalCalls = 0;

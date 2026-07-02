@@ -62,4 +62,12 @@ describe('sendInChunks', () => {
     expect(batches).toBe(3);
     expect(queue.batches.map((b) => b.length)).toEqual([1, 1, 1]);
   });
+
+  it('chunkSize が NaN でもデフォルト 100 にフォールバックし、メッセージが消失しない', async () => {
+    const queue = createFakeQueue<number>();
+    const items = Array.from({ length: 250 }, (_, i) => i);
+    const batches = await sendInChunks(queue, items, { chunkSize: NaN });
+    expect(batches).toBe(3); // ceil(250 / 100)
+    expect(queue.batches.flat()).toHaveLength(250);
+  });
 });

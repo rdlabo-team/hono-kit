@@ -133,7 +133,11 @@ export async function processBatch<Body>(
       message.ack();
       processed++;
     } catch (error) {
-      onError(error, message);
+      try {
+        onError(error, message);
+      } catch {
+        // onError contract says "must not throw"; guard defensively so retry() and remaining messages still run.
+      }
       message.retry(retryOptions);
       failed++;
     }

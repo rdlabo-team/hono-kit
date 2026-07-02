@@ -116,7 +116,11 @@ export async function sendInChunks<Body>(
   if (items.length === 0) {
     return 0;
   }
-  const chunkSize = Math.min(MAX_BATCH_SIZE, Math.max(1, Math.trunc(options?.chunkSize ?? MAX_BATCH_SIZE)));
+  const rawChunkSize = options?.chunkSize ?? MAX_BATCH_SIZE;
+  const chunkSize = Math.min(
+    MAX_BATCH_SIZE,
+    Math.max(1, Math.trunc(Number.isNaN(rawChunkSize) ? MAX_BATCH_SIZE : rawChunkSize)),
+  );
   const batches = chunk(items, chunkSize);
   for (const batch of batches) {
     await queue.sendBatch(batch.map((body) => ({ body })));
